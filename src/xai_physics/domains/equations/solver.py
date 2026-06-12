@@ -158,6 +158,13 @@ def _unit_factor(unit: str | None) -> float:
         "V/m": 1.0,
         "kV/m": 1e3,
         "N/C": 1.0,
+
+        # angle
+        "rad": 1.0,
+        "deg": math.pi / 180.0,
+        "degree": math.pi / 180.0,
+        "degrees": math.pi / 180.0,
+        "?": math.pi / 180.0,
     }
     if normalized in aliases:
         return aliases[normalized]
@@ -1504,6 +1511,220 @@ def _solve_absolute_error_from_actual(schema: dict[str, Any], formula: str) -> S
     result.answer = _answer(value, query, "absolute_error", _raw_unit(query, ""))
     return result
 
+
+def _solve_capacitor_plate_force_by_charge_area(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "force")
+    if query is None:
+        return _fail("Only force query is supported for F = Q^2/(2*eps0*eps_r*A).", formula)
+
+    try:
+        q = _required_si(schema, "charge", "C")
+        area = _area_si(schema)
+        eps_r = _relative_permittivity(schema)
+        if area <= 0 or eps_r == 0:
+            return _fail("Area must be positive and relative permittivity must be non-zero.", formula)
+
+        value = q * q / (2.0 * EPS0 * eps_r * area)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step(
+        "Formula selected",
+        "Use capacitor plate attraction force F = Q^2/(2*eps0*eps_r*A).",
+    )
+    result.answer = _answer(value, query, "force", "N")
+    return result
+
+
+def _solve_self_inductance_from_emf(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "inductance")
+    if query is None:
+        return _fail("Only inductance query is supported for L = emf*dt/dI.", formula)
+
+    try:
+        emf = _required_si(schema, "voltage", "V")
+        dt = _required_si(schema, "time", "s")
+        d_i = _required_si(schema, "current_change", "A")
+        if d_i == 0:
+            return _fail("Current change must be non-zero.", formula)
+
+        value = abs(emf) * dt / abs(d_i)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step(
+        "Formula selected",
+        "Use self-induction relation |emf| = L*|dI|/dt, so L = |emf|*dt/|dI|.",
+    )
+    result.answer = _answer(value, query, "inductance", "H")
+    return result
+
+
+def _solve_equilibrium_mass_with_angle(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "mass")
+    if query is None:
+        return _fail("Only mass query is supported for m = |q|E/(g*tan(theta)).", formula)
+
+    try:
+        q = _required_si(schema, "charge", "C")
+        e = _required_si(schema, "electric_field", "V/m")
+        theta = _required_si(schema, "angle", "rad")
+
+        g_obj = _given_obj(schema, ("acceleration", "gravitational_acceleration"))
+        g = _to_si_quantity(g_obj, "m/s2") if g_obj is not None else G_DEFAULT
+
+        tan_theta = math.tan(theta)
+        if g == 0 or tan_theta == 0:
+            return _fail("g and tan(theta) must be non-zero.", formula)
+
+        value = abs(q) * e / (g * tan_theta)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step(
+        "Formula selected",
+        "For equilibrium with a string angle theta from vertical, tan(theta)=|q|E/(mg).",
+    )
+    result.answer = _answer(value, query, "mass", "kg")
+    return result
+
+
+def _solve_lc_current_amplitude_from_charge_amplitude(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("current_amplitude", "current"))
+    if query is None:
+        return _fail("Only current amplitude query is supported for I0 = omega*Q0.", formula)
+
+    try:
+        omega = _required_si(schema, "angular_frequency", "rad/s")
+        q0_obj = _given_obj(schema, "charge_amplitude")
+        if q0_obj is None:
+            q0_obj = _given_obj(schema, "charge")
+        if q0_obj is None:
+            raise ValueError("Missing charge amplitude Q0.")
+
+        q0 = _to_si_quantity(q0_obj, "C")
+        value = omega * q0
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "In an LC circuit, current amplitude is I0 = omega*Q0.")
+    result.answer = _answer(value, query, "current_amplitude", "A")
+    return result
+
+
+def _phase_value(schema: dict[str, Any]) -> float:
+    obj = _given_obj(schema, ("phase", "phase_angle"))
+    if obj is None:
+        return 0.0
+    return _to_si_quantity(obj, "rad")
+
+
+def _omega_t_phi(schema: dict[str, Any]) -> float:
+    omega = _required_si(schema, "angular_frequency", "rad/s")
+    t = _required_si(schema, "time", "s")
+    phi = _phase_value(schema)
+    return omega * t + phi
+
+
+def _solve_harmonic_current_cos_time(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("current", "current_amplitude"))
+    if query is None:
+        return _fail("Only current query is supported for i(t)=I0*cos(omega*t+phi).", formula)
+
+    try:
+        amp_obj = _given_obj(schema, "current_amplitude")
+        if amp_obj is None:
+            raise ValueError("Missing current amplitude I0.")
+        amp = _to_si_quantity(amp_obj, "A")
+        value = amp * math.cos(_omega_t_phi(schema))
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use sinusoidal current i(t)=I0*cos(omega*t+phi).")
+    result.answer = _answer(value, query, "current", "A")
+    return result
+
+
+def _solve_harmonic_voltage_cos_time(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("voltage", "voltage_amplitude"))
+    if query is None:
+        return _fail("Only voltage query is supported for u(t)=U0*cos(omega*t+phi).", formula)
+
+    try:
+        amp_obj = _given_obj(schema, "voltage_amplitude")
+        if amp_obj is None:
+            raise ValueError("Missing voltage amplitude U0.")
+        amp = _to_si_quantity(amp_obj, "V")
+        value = amp * math.cos(_omega_t_phi(schema))
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use sinusoidal voltage u(t)=U0*cos(omega*t+phi).")
+    result.answer = _answer(value, query, "voltage", "V")
+    return result
+
+
+def _solve_harmonic_charge_cos_time(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("charge", "charge_amplitude"))
+    if query is None:
+        return _fail("Only charge query is supported for q(t)=Q0*cos(omega*t+phi).", formula)
+
+    try:
+        amp_obj = _given_obj(schema, "charge_amplitude")
+        if amp_obj is None:
+            raise ValueError("Missing charge amplitude Q0.")
+        amp = _to_si_quantity(amp_obj, "C")
+        value = amp * math.cos(_omega_t_phi(schema))
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use sinusoidal charge q(t)=Q0*cos(omega*t+phi).")
+    result.answer = _answer(value, query, "charge", "C")
+    return result
+
+
+def _solve_lc_electric_energy_time(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "energy")
+    if query is None:
+        return _fail("Only energy query is supported for We=Wtotal*cos^2(omega*t+phi).", formula)
+
+    try:
+        w_total = _required_si(schema, "energy", "J")
+        c = math.cos(_omega_t_phi(schema))
+        value = w_total * c * c
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "In an ideal LC circuit, electric energy We=Wtotal*cos^2(omega*t+phi).")
+    result.answer = _answer(value, query, "energy", "J")
+    return result
+
+
+def _solve_lc_magnetic_energy_time(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "energy")
+    if query is None:
+        return _fail("Only energy query is supported for Wm=Wtotal*sin^2(omega*t+phi).", formula)
+
+    try:
+        w_total = _required_si(schema, "energy", "J")
+        s = math.sin(_omega_t_phi(schema))
+        value = w_total * s * s
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "In an ideal LC circuit, magnetic energy Wm=Wtotal*sin^2(omega*t+phi).")
+    result.answer = _answer(value, query, "energy", "J")
+    return result
+
 def solve_schema(schema: dict[str, Any]) -> SolveResult:
     formula = _formula_id(schema)
 
@@ -1548,6 +1769,15 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "infinite_wire_electric_field": _solve_infinite_wire_electric_field,
         "percentage_relative_error": _solve_percentage_relative_error,
         "absolute_error_from_actual": _solve_absolute_error_from_actual,
+        "capacitor_plate_force_by_charge_area": _solve_capacitor_plate_force_by_charge_area,
+        "self_inductance_from_emf": _solve_self_inductance_from_emf,
+        "equilibrium_mass_with_angle": _solve_equilibrium_mass_with_angle,
+        "lc_current_amplitude_from_charge_amplitude": _solve_lc_current_amplitude_from_charge_amplitude,
+        "harmonic_current_cos_time": _solve_harmonic_current_cos_time,
+        "harmonic_voltage_cos_time": _solve_harmonic_voltage_cos_time,
+        "harmonic_charge_cos_time": _solve_harmonic_charge_cos_time,
+        "lc_electric_energy_time": _solve_lc_electric_energy_time,
+        "lc_magnetic_energy_time": _solve_lc_magnetic_energy_time,
     }
 
     handler = handlers.get(formula)
