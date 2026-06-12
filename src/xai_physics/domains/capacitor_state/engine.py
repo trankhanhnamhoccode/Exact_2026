@@ -14,6 +14,7 @@ from xai_physics.domains.capacitor_state.events import (
     InsertDielectric,
 )
 from xai_physics.domains.capacitor_state.redistribution import ParallelRedistribution
+from xai_physics.domains.capacitor_state.contract import validate_schema
 
 
 def _quantity_to_si(data: Optional[dict[str, Any]]) -> Optional[float]:
@@ -198,6 +199,7 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
     result = SolveResult(status="solved", domain="capacitor_state")
 
     try:
+        validate_schema(schema)
         system = _build_system(schema)
 
         result.add_step(
