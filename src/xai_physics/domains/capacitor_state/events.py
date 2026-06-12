@@ -182,3 +182,30 @@ class ConnectToInductor:
         cap.connected_to_source = False
         cap.infer_missing()
         return cap
+
+
+
+class ReplaceDielectric:
+    """
+    Replace one dielectric material by another.
+
+    Parameters:
+    - initial_k: dielectric constant before replacement
+    - final_k: dielectric constant after replacement
+
+    Physical effect:
+    - C scales by final_k / initial_k.
+    - If connected to source: V is constant, Q changes.
+    - If disconnected: Q is constant, V changes.
+    """
+
+    def __init__(self, initial_k: float, final_k: float):
+        if initial_k == 0:
+            raise ValueError("initial_k must be non-zero.")
+        self.initial_k = float(initial_k)
+        self.final_k = float(final_k)
+        self.factor = self.final_k / self.initial_k
+
+    def apply(self, cap):
+        # Reuse the same physics as InsertDielectric with scale factor.
+        return InsertDielectric(self.factor).apply(cap)

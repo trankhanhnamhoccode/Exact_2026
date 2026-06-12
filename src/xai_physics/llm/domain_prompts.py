@@ -239,6 +239,31 @@ Rules:
 - Use energy_ratio only when the question asks for a ratio/change factor, not an absolute energy value.
 - For disconnected parallel-plate capacitors, charge remains constant.
 - If plate distance is scaled while charge remains constant, represent that as a DistanceScale event.
+
+
+ReplaceDielectric event:
+
+Use this when a dielectric material with one dielectric constant is replaced by another.
+
+{
+  "type": "ReplaceDielectric",
+  "apply_to": ["C1"],
+  "params": {
+    "initial_k": 4,
+    "final_k": 2
+  }
+}
+
+Capacitance ratio query:
+
+Use this when the problem asks for the ratio of final capacitance to initial capacitance.
+
+{
+  "type": "capacitance_ratio",
+  "target": "C1",
+  "unit": "times"
+}
+
 Return only the schema JSON.
 Do not solve.
 Do not include final answer.

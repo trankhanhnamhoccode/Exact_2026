@@ -1,4 +1,4 @@
-﻿from xai_physics.domains.capacitor_state.retrieval.pending_store import (
+from xai_physics.domains.capacitor_state.retrieval.pending_store import (
     load_pending_examples,
     filter_pending_by_tag,
     filter_pending_by_feature,
@@ -33,5 +33,11 @@ def test_distance_energy_scaling_is_no_longer_pending_but_nl311_remains():
 
 def test_lc_oscillation_is_no_longer_pending():
     examples = filter_pending_by_tag("inductor_oscillation")
+
+    assert examples == []
+
+
+def test_replace_dielectric_is_no_longer_pending():
+    examples = filter_pending_by_tag("replace_dielectric")
 
     assert examples == []

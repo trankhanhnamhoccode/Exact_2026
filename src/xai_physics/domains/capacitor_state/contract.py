@@ -18,6 +18,7 @@ SUPPORTED_EVENTS = {
     "ParallelRedistribution",
     "ShortCircuit",
     "ConnectToInductor",
+    "ReplaceDielectric",
 }
 
 SUPPORTED_QUERIES = {
@@ -26,6 +27,7 @@ SUPPORTED_QUERIES = {
     "capacitance",
     "energy",
     "energy_ratio",
+    "capacitance_ratio",
 }
 
 

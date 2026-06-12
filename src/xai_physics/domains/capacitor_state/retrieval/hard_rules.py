@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 
@@ -132,29 +132,71 @@ def apply_hard_rules(problem: str) -> list[TagHit]:
     text = problem.lower()
     hits: list[TagHit] = []
 
+    def add(
+        tag: str,
+        score: float,
+        evidence: str,
+        source: str = "hard_rule",
+    ) -> None:
+        if any(hit.tag == tag for hit in hits):
+            return
+
+        hits.append(
+            TagHit(
+                tag=tag,
+                source=source,
+                score=score,
+                evidence=evidence,
+            )
+        )
+
     for tag, pattern, evidence in HARD_RULES:
         if re.search(pattern, text, flags=re.IGNORECASE):
-            hits.append(
-                TagHit(
-                    tag=tag,
-                    source="hard_rule",
-                    score=1.0,
-                    evidence=evidence,
-                )
+            add(
+                tag=tag,
+                source="hard_rule",
+                score=1.0,
+                evidence=evidence,
             )
 
     existing = {hit.tag for hit in hits}
 
     for tag, required, evidence in DERIVED_RULES:
         if required.issubset(existing) and tag not in existing:
-            hits.append(
-                TagHit(
-                    tag=tag,
-                    source="derived_rule",
-                    score=1.0,
-                    evidence=evidence,
-                )
+            add(
+                tag=tag,
+                source="derived_rule",
+                score=1.0,
+                evidence=evidence,
             )
             existing.add(tag)
+
+    if (
+        ("replace" in text or "replaced" in text)
+        and ("dielectric" in text or "permittivity" in text)
+    ):
+        add(
+            tag="replace_dielectric",
+            source="hard_rule",
+            score=0.95,
+            evidence="dielectric replacement language",
+        )
+
+    if (
+        ("ratio" in text or "how many times" in text or "times" in text)
+        and ("capacitance" in text or "capacity" in text)
+    ):
+        add(
+            tag="capacitance_ratio_query",
+            source="hard_rule",
+            score=0.95,
+            evidence="capacitance ratio query",
+        )
+        add(
+            tag="ratio_query",
+            source="hard_rule",
+            score=0.90,
+            evidence="ratio query",
+        )
 
     return hits

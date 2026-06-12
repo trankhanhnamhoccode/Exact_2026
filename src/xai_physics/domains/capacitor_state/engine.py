@@ -14,6 +14,8 @@ from xai_physics.domains.capacitor_state.events import (
     InsertDielectric,
     ShortCircuit,
     ConnectToInductor,
+    ReplaceDielectric,
+
 )
 from xai_physics.domains.capacitor_state.redistribution import ParallelRedistribution
 from xai_physics.domains.capacitor_state.contract import validate_schema
@@ -79,6 +81,14 @@ def _apply_single_cap_event(event_schema: dict[str, Any], system: SystemState) -
     if event_type == "DisconnectFromSource":
         return DisconnectFromSource().apply(cap)
 
+    if event_type == "ReplaceDielectric":
+        initial_k = params.get("initial_k")
+        final_k = params.get("final_k")
+        if initial_k is None or final_k is None:
+            raise ValueError("ReplaceDielectric requires params.initial_k and params.final_k.")
+        ReplaceDielectric(initial_k=initial_k, final_k=final_k).apply(cap)
+        return
+
     if event_type == "InsertDielectric":
         k = params.get("dielectric_constant", params.get("k"))
         if k is None:
@@ -134,6 +144,25 @@ def _format_value(value_si: float, si_unit: str, output_unit: Optional[str]) -> 
 
 
 def _answer_query(query: dict[str, Any], system: SystemState, initial_system: SystemState | None = None) -> str:
+    if query.get("type") == "capacitance_ratio":
+        if initial_system is None:
+            raise ValueError("capacitance_ratio query requires initial_system snapshot.")
+
+        target = query.get("target", "system")
+
+        if target == "system":
+            initial_c = sum(cap.capacitance_F for cap in initial_system.capacitors.values())
+            final_c = sum(cap.capacitance_F for cap in system.capacitors.values())
+        else:
+            initial_c = initial_system.get(target).capacitance_F
+            final_c = system.get(target).capacitance_F
+
+        if initial_c == 0:
+            raise ValueError("Cannot compute capacitance_ratio because initial capacitance is zero.")
+
+        ratio = final_c / initial_c
+        return f"{ratio:g} times"
+
     if query.get("type") == "energy_ratio":
         if initial_system is None:
             raise ValueError("energy_ratio query requires initial_system snapshot.")
