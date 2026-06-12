@@ -32,6 +32,7 @@ def _fmt(value: float) -> str:
 
 
 
+
 def _unit_factor(unit: str | None) -> float:
     if unit is None:
         return 1.0
@@ -41,10 +42,13 @@ def _unit_factor(unit: str | None) -> float:
         return 1.0
 
     aliases = {
-        # dimensionless
+        # dimensionless / count
         "times": 1.0,
         "x": 1.0,
         "%": 1.0,
+        "turn": 1.0,
+        "turns": 1.0,
+        "turns/m": 1.0,
 
         # capacitance
         "F": 1.0,
@@ -66,7 +70,7 @@ def _unit_factor(unit: str | None) -> float:
         "nC": 1e-9,
         "pC": 1e-12,
 
-        # voltage/current/resistance/power/energy/frequency
+        # voltage/current/resistance/power/energy/frequency/time
         "V": 1.0,
         "kV": 1e3,
         "mV": 1e-3,
@@ -88,14 +92,24 @@ def _unit_factor(unit: str | None) -> float:
         "Hz": 1.0,
         "kHz": 1e3,
         "rad/s": 1.0,
+        "s": 1.0,
+        "ms": 1e-3,
 
-        # inductance
+        # inductance / magnetism
         "H": 1.0,
         "mH": 1e-3,
         "uH": 1e-6,
         "?H": 1e-6,
         "?H": 1e-6,
         "?H": 1e-6,
+        "T": 1.0,
+        "mT": 1e-3,
+        "Wb": 1.0,
+        "mWb": 1e-3,
+        "uWb": 1e-6,
+        "?Wb": 1e-6,
+        "?Wb": 1e-6,
+        "?Wb": 1e-6,
 
         # geometry / field
         "m": 1.0,
@@ -1154,6 +1168,154 @@ def _solve_frequency_scaling_for_resonance(schema: dict[str, Any], formula: str)
     result.answer = _answer_ratio(value, query)
     return result
 
+
+MU0 = 4 * math.pi * 1e-7
+
+
+def _solve_solenoid_turn_density(schema: dict[str, Any], formula: str) -> SolveResult:
+    n_query = _query_obj(schema, "turn_density")
+    n_turns_query = _query_obj(schema, "turn_count")
+    length_query = _query_obj(schema, ("length", "distance"))
+
+    try:
+        if n_query is not None:
+            n_turns = _required_si(schema, "turn_count", "turns")
+            length = _required_si(schema, ("length", "distance"), "m")
+            if length == 0:
+                return _fail("Length must be non-zero when solving turn density.", formula)
+            value = n_turns / length
+            query = n_query
+            quantity_type = "turn_density"
+            default_unit = "turns/m"
+        elif n_turns_query is not None:
+            n_density = _required_si(schema, "turn_density", "turns/m")
+            length = _required_si(schema, ("length", "distance"), "m")
+            value = n_density * length
+            query = n_turns_query
+            quantity_type = "turn_count"
+            default_unit = "turns"
+        elif length_query is not None:
+            n_turns = _required_si(schema, "turn_count", "turns")
+            n_density = _required_si(schema, "turn_density", "turns/m")
+            if n_density == 0:
+                return _fail("Turn density must be non-zero when solving length.", formula)
+            value = n_turns / n_density
+            query = length_query
+            quantity_type = "length"
+            default_unit = "m"
+        else:
+            return _fail("No supported query object for n = N/l.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use solenoid turn density n = N/l.")
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
+def _solve_solenoid_magnetic_field(schema: dict[str, Any], formula: str) -> SolveResult:
+    b_query = _query_obj(schema, "magnetic_field")
+    i_query = _query_obj(schema, "current")
+
+    try:
+        n_turns_obj = _given_obj(schema, "turn_count")
+        length_obj = _given_obj(schema, ("length", "distance"))
+        n_density_obj = _given_obj(schema, "turn_density")
+
+        if n_density_obj is not None:
+            n_density = _to_si_quantity(n_density_obj, "turns/m")
+        elif n_turns_obj is not None and length_obj is not None:
+            n_turns = _to_si_quantity(n_turns_obj, "turns")
+            length = _to_si_quantity(length_obj, "m")
+            if length == 0:
+                return _fail("Length must be non-zero.", formula)
+            n_density = n_turns / length
+        else:
+            return _fail("Missing turn count + length, or turn density.", formula)
+
+        if b_query is not None:
+            current = _required_si(schema, "current", "A")
+            value = MU0 * n_density * current
+            query = b_query
+            quantity_type = "magnetic_field"
+            default_unit = "T"
+        elif i_query is not None:
+            b = _required_si(schema, "magnetic_field", "T")
+            if n_density == 0:
+                return _fail("Turn density must be non-zero when solving current.", formula)
+            value = b / (MU0 * n_density)
+            query = i_query
+            quantity_type = "current"
+            default_unit = "A"
+        else:
+            return _fail("No supported query object for B = mu0*n*I.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use long-solenoid magnetic field B = mu0*n*I = mu0*N*I/l.")
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
+def _solve_solenoid_inductance(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "inductance")
+    if query is None:
+        return _fail("Only inductance query is supported for L = mu0*N^2*A/l.", formula)
+
+    try:
+        n_turns = _required_si(schema, "turn_count", "turns")
+        area = _area_si(schema)
+        length = _required_si(schema, ("length", "distance"), "m")
+        if length == 0:
+            return _fail("Length must be non-zero.", formula)
+        value = MU0 * n_turns * n_turns * area / length
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use ideal solenoid inductance L = mu0*N^2*A/l.")
+    result.answer = _answer(value, query, "inductance", "mH")
+    return result
+
+
+def _solve_magnetic_flux_total(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "magnetic_flux")
+    if query is None:
+        return _fail("Only magnetic flux query is supported for Phi = N*B*A.", formula)
+
+    try:
+        n_obj = _given_obj(schema, "turn_count")
+        n_turns = _to_si_quantity(n_obj, "turns") if n_obj is not None else 1.0
+        b = _required_si(schema, "magnetic_field", "T")
+        area = _area_si(schema)
+        value = n_turns * b * area
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use total flux linkage Phi = N*B*A.")
+    result.answer = _answer(value, query, "magnetic_flux", "Wb")
+    return result
+
+
+def _solve_magnetic_energy_density(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "energy_density")
+    if query is None:
+        return _fail("Only energy density query is supported for u = B^2/(2*mu0).", formula)
+
+    try:
+        b = _required_si(schema, "magnetic_field", "T")
+        value = b * b / (2.0 * MU0)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use magnetic field energy density u = B^2/(2*mu0).")
+    result.answer = _answer(value, query, "energy_density", "J/m3")
+    return result
+
 def solve_schema(schema: dict[str, Any]) -> SolveResult:
     formula = _formula_id(schema)
 
@@ -1186,6 +1348,12 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "power_factor": _solve_power_factor,
         "quality_factor": _solve_quality_factor,
         "frequency_scaling_for_resonance": _solve_frequency_scaling_for_resonance,
+        "solenoid_turn_density": _solve_solenoid_turn_density,
+        "solenoid_magnetic_field": _solve_solenoid_magnetic_field,
+        "solenoid_magnetic_field_from_n": _solve_solenoid_magnetic_field,
+        "solenoid_inductance": _solve_solenoid_inductance,
+        "magnetic_flux_total": _solve_magnetic_flux_total,
+        "magnetic_energy_density": _solve_magnetic_energy_density,
     }
 
     handler = handlers.get(formula)
