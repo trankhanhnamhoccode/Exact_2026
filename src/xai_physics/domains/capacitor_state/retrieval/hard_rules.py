@@ -1,0 +1,160 @@
+﻿from __future__ import annotations
+
+import re
+
+from xai_physics.domains.capacitor_state.retrieval.types import TagHit
+
+
+HARD_RULES: list[tuple[str, str, str]] = [
+    (
+        "dielectric",
+        r"\b(dielectric|dielectric constant|relative permittivity|permittivity|ε|epsilon|eps|k\s*=)\b",
+        "Dielectric insertion or permittivity change is explicitly mentioned.",
+    ),
+    (
+        "disconnect",
+        r"\b(disconnected|disconnect|isolated|cut from the source|removed from (the )?(battery|source|power source))\b",
+        "Capacitor is disconnected or isolated.",
+    ),
+    (
+        "connected_source",
+        r"\b(connected to (a )?(battery|source|power source)|remains connected|still connected|while still connected)\b",
+        "Capacitor is connected to a source.",
+    ),
+    (
+        "parallel_connection",
+        r"\b(parallel|connected in parallel)\b|connected\s+(with|to)?\s*(another|their)?\s*.{0,80}\b(terminals|plates)\b.{0,80}\btogether\b",
+        "Parallel-like capacitor connection is explicitly mentioned.",
+    ),
+    (
+        "like_polarity_connection",
+        r"\b(like[- ]?(poled|polarity|signed)|same[- ]?(polarity|signed)|positive to positive|negative to negative)\b",
+        "Like-polarity terminal connection is explicitly mentioned.",
+    ),
+    (
+        "uncharged_capacitor",
+        r"\b(uncharged|initially uncharged)\b",
+        "Uncharged capacitor is explicitly mentioned.",
+    ),
+    (
+        "distance_scale",
+        r"\b(plate distance|plate separation|distance between plates|separation|plates are moved apart|moved apart|distance).{0,80}\b(doubled|tripled|quadrupled|halved|increased|decreased|scaled|4 times)\b",
+        "Plate distance/separation changes.",
+    ),
+    (
+        "area_scale",
+        r"\b(plate area|area of plates|area).{0,80}\b(doubled|tripled|quadrupled|halved|increased|decreased|scaled)\b",
+        "Plate area changes.",
+    ),
+    (
+        "short_circuit",
+        r"\b(short[- ]?circuited|short circuit)\b",
+        "Capacitor is short-circuited.",
+    ),
+    (
+        "series_connection",
+        r"\b(series|connected in series)\b",
+        "Series connection is mentioned.",
+    ),
+    (
+        "inductor_oscillation",
+        r"\b(inductor|oscillation|LC|oscillating circuit)\b",
+        "Capacitor-inductor oscillation is mentioned.",
+    ),
+    (
+        "work_query",
+        r"\b(work|additional work|work supplied)\b",
+        "The problem asks about work.",
+    ),
+    (
+        "ratio_query",
+        r"\b(how many times|percentage|percent|how does .* change|increase|decrease)\b",
+        "The problem asks for a ratio or qualitative change.",
+    ),
+    (
+        "charge_query",
+        r"\b(find|calculate|determine|what is).{0,80}\b(charge)\b",
+        "The problem asks for charge.",
+    ),
+    (
+        "voltage_query",
+        r"\b(find|calculate|determine|what is).{0,100}\b(voltage|potential difference)\b",
+        "The problem asks for voltage.",
+    ),
+    (
+        "energy_query",
+        r"\b(find|calculate|determine|what is).{0,100}\b(energy|electric field energy|stored energy)\b",
+        "The problem asks for energy.",
+    ),
+    (
+        "capacitance_query",
+        r"\b(find|calculate|determine|what is).{0,100}\b(capacitance)\b",
+        "The problem asks for capacitance.",
+    ),
+]
+
+
+DERIVED_RULES: list[tuple[str, set[str], str]] = [
+    (
+        "charge_redistribution",
+        {"parallel_connection", "uncharged_capacitor"},
+        "Parallel connection with an uncharged capacitor indicates charge redistribution.",
+    ),
+    (
+        "charge_redistribution",
+        {"parallel_connection", "like_polarity_connection"},
+        "Like-polarity capacitor connection indicates charge redistribution.",
+    ),
+    (
+        "isolated_dielectric",
+        {"disconnect", "dielectric"},
+        "Disconnected capacitor plus dielectric insertion implies charge conservation.",
+    ),
+    (
+        "source_dielectric",
+        {"connected_source", "dielectric"},
+        "Connected source plus dielectric insertion implies voltage stays fixed.",
+    ),
+    (
+        "isolated_distance_change",
+        {"disconnect", "distance_scale"},
+        "Disconnected capacitor plus plate distance change implies charge conservation.",
+    ),
+    (
+        "source_distance_change",
+        {"connected_source", "distance_scale"},
+        "Connected source plus plate distance change implies voltage stays fixed.",
+    ),
+]
+
+
+def apply_hard_rules(problem: str) -> list[TagHit]:
+    text = problem.lower()
+    hits: list[TagHit] = []
+
+    for tag, pattern, evidence in HARD_RULES:
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            hits.append(
+                TagHit(
+                    tag=tag,
+                    source="hard_rule",
+                    score=1.0,
+                    evidence=evidence,
+                )
+            )
+
+    existing = {hit.tag for hit in hits}
+
+    for tag, required, evidence in DERIVED_RULES:
+        if required.issubset(existing) and tag not in existing:
+            hits.append(
+                TagHit(
+                    tag=tag,
+                    source="derived_rule",
+                    score=1.0,
+                    evidence=evidence,
+                )
+            )
+            existing.add(tag)
+
+    return hits
