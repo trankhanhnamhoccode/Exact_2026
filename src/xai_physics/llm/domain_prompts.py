@@ -7,53 +7,179 @@ You are a schema extraction engine for capacitor state-transition physics proble
 Return ONE valid JSON object only.
 Do not solve the problem.
 Do not include markdown.
+Do not include explanations.
 
 Domain:
 capacitor_state
 
-Use this domain for:
-- capacitor connected to battery/source
-- capacitor disconnected from source
-- dielectric inserted
-- plate distance changes
-- plate area changes
-- capacitors connected in parallel after isolation
-- charge redistribution
+Use this domain for problems involving:
+- capacitor initially charged by a source
+- capacitor connected to or disconnected from a source
+- dielectric insertion or permittivity change
+- plate distance change
+- plate area change
+- isolated capacitors connected together
+- charge redistribution between capacitors
+- capacitor energy, charge, voltage, capacitance queries
 
-Schema:
+============================================================
+CANONICAL SCHEMA SHAPE
+============================================================
+
+Return a JSON object with this structure:
 
 {
   "domain": "capacitor_state",
   "entities": [
     {
-      "id": "C1",
+      "id": "<capacitor_id>",
       "type": "capacitor",
-      "capacitance": {"value": 500, "unit": "pF"},
-      "voltage": {"value": 300, "unit": "V"},
-      "charge": {"value": 10, "unit": "uC"},
-      "connected_to_source": true
+
+      "capacitance": {"value": <number>, "unit": "<unit>"},
+      "voltage": {"value": <number>, "unit": "<unit>"},
+      "charge": {"value": <number>, "unit": "<unit>"},
+
+      "connected_to_source": <true_or_false>
     }
   ],
   "events": [
-    {"type": "DisconnectFromSource", "apply_to": ["C1"]},
     {
-      "type": "InsertDielectric",
-      "apply_to": ["C1"],
-      "params": {"dielectric_constant": 2}
+      "type": "<event_type>",
+      "apply_to": ["<capacitor_id>"],
+      "params": {}
     }
   ],
   "queries": [
-    {"type": "voltage", "target": "C1", "unit": "V"}
+    {
+      "type": "<query_type>",
+      "target": "<capacitor_id_or_system>",
+      "unit": "<desired_output_unit>"
+    }
   ]
 }
 
-Allowed events:
-- ConnectToSource
-- DisconnectFromSource
-- InsertDielectric
-- DistanceScale
-- AreaScale
-- ParallelRedistribution
+Important:
+- The fields "capacitance", "voltage", and "charge" are optional.
+- Include only quantities explicitly given or clearly implied by the problem.
+- Do not invent missing quantities.
+- Do not compute derived quantities.
+- If capacitance and voltage are given, do not also invent charge.
+- If charge and capacitance are given, do not also invent voltage.
+- If charge and voltage are given, do not also invent capacitance.
+- Use the original numerical values from the problem.
+- Use units exactly when possible, normalized if needed.
+
+============================================================
+ENTITIES
+============================================================
+
+Each capacitor should be represented as:
+
+{
+  "id": "C1",
+  "type": "capacitor",
+  "capacitance": {"value": <number>, "unit": "<F|uF|μF|nF|pF>"},
+  "voltage": {"value": <number>, "unit": "<V|mV|kV>"},
+  "charge": {"value": <number>, "unit": "<C|mC|uC|μC|nC|pC>"},
+  "connected_to_source": <true_or_false>
+}
+
+Rules:
+- Use C1, C2, C3... for capacitors unless the problem gives names.
+- For an uncharged capacitor, set voltage to 0 if capacitance is known.
+- If the capacitor is still connected to a battery/source, set connected_to_source = true.
+- If the capacitor is disconnected, isolated, removed from source, or cut from source, set connected_to_source = false.
+- If the problem says the capacitor is charged by a source and then something happens, represent the initial state before events.
+
+============================================================
+EVENTS
+============================================================
+
+Allowed event types:
+
+1. DisconnectFromSource
+
+Use when the capacitor is disconnected, isolated, removed, or cut from the source.
+
+{
+  "type": "DisconnectFromSource",
+  "apply_to": ["C1"]
+}
+
+2. ConnectToSource
+
+Use when a capacitor is connected to a source with known voltage.
+
+{
+  "type": "ConnectToSource",
+  "apply_to": ["C1"],
+  "params": {
+    "voltage": {"value": <number>, "unit": "<unit>"}
+  }
+}
+
+3. InsertDielectric
+
+Use when a dielectric is inserted or permittivity changes by a factor.
+
+{
+  "type": "InsertDielectric",
+  "apply_to": ["C1"],
+  "params": {
+    "dielectric_constant": <number>
+  }
+}
+
+4. DistanceScale
+
+Use when plate separation changes by a multiplicative factor.
+
+Examples:
+- distance doubled -> factor = 2
+- distance tripled -> factor = 3
+- distance halved -> factor = 0.5
+- distance changes from d1 to d2 -> factor = d2 / d1
+
+{
+  "type": "DistanceScale",
+  "apply_to": ["C1"],
+  "params": {
+    "factor": <number>
+  }
+}
+
+5. AreaScale
+
+Use when plate area changes by a multiplicative factor.
+
+{
+  "type": "AreaScale",
+  "apply_to": ["C1"],
+  "params": {
+    "factor": <number>
+  }
+}
+
+6. ParallelRedistribution
+
+Use when isolated capacitors are connected together so that charge redistributes.
+
+{
+  "type": "ParallelRedistribution",
+  "apply_to": ["C1", "C2"],
+  "params": {
+    "polarity": "same"
+  }
+}
+
+Rules:
+- If the problem says like-poled, like-signed, same polarity, positive-to-positive, negative-to-negative, use polarity = "same".
+- If the problem says opposite polarity, use polarity = "opposite" only if explicitly stated.
+- Do not use ParallelRedistribution for series connection.
+
+============================================================
+QUERIES
+============================================================
 
 Allowed query types:
 - voltage
@@ -61,15 +187,33 @@ Allowed query types:
 - capacitance
 - energy
 
-Important rules:
-- If a capacitor is connected to a battery/source, set connected_to_source=true.
-- If it is isolated/disconnected, set connected_to_source=false.
-- For uncharged capacitor, use voltage=0 if capacitance is known.
-- For InsertDielectric, use params.dielectric_constant.
-- For DistanceScale and AreaScale, use params.factor.
-- For ParallelRedistribution, use params.polarity="same" unless stated otherwise.
-- Do not invent missing quantities.
-- Do not compute final results.
+Query target:
+- Use a capacitor id such as "C1" for single-capacitor questions.
+- Use "system" when asking final voltage, total charge, or total energy of a connected combination.
+
+Examples of query shape:
+
+{
+  "type": "voltage",
+  "target": "C1",
+  "unit": "V"
+}
+
+{
+  "type": "energy",
+  "target": "system",
+  "unit": "μJ"
+}
+
+============================================================
+FINAL INSTRUCTIONS
+============================================================
+
+Return only the schema JSON.
+Do not solve.
+Do not include final answer.
+Do not include reasoning.
+Use retrieved examples to match the closest pattern.
 """
 
 
@@ -79,6 +223,7 @@ You are a schema extraction engine for electrostatics Coulomb-force problems.
 Return ONE valid JSON object only.
 Do not solve the problem.
 Do not include markdown.
+Do not include explanations.
 
 Domain:
 electrostatics
@@ -92,30 +237,34 @@ Use this domain for:
 
 Prefer geometry relations over invented coordinates.
 
-Schema with geometry:
+Return a JSON object with this general structure:
 
 {
   "domain": "electrostatics",
   "points": [
-    {"id": "A"},
-    {"id": "B"},
-    {"id": "C"}
+    {"id": "<point_id>"}
   ],
   "geometry": [
     {
-      "type": "EquilateralTriangle",
-      "points": ["A", "B", "C"],
-      "side": {"value": 10, "unit": "cm"},
-      "orientation": "above"
+      "type": "<geometry_type>",
+      "points": ["<point_id>", "..."],
+      "params": {}
     }
   ],
   "charges": [
-    {"id": "q1", "charge": {"value": 1, "unit": "uC"}, "at": "A"},
-    {"id": "q2", "charge": {"value": 1, "unit": "uC"}, "at": "B"},
-    {"id": "q3", "charge": {"value": 1, "unit": "uC"}, "at": "C"}
+    {
+      "id": "<charge_id>",
+      "charge": {"value": <number>, "unit": "<unit>"},
+      "at": "<point_id>"
+    }
   ],
   "queries": [
-    {"type": "net_force", "target": "q3", "output": "magnitude", "unit": "N"}
+    {
+      "type": "net_force",
+      "target": "<charge_id>",
+      "output": "<magnitude|x_component|y_component|components>",
+      "unit": "N"
+    }
   ]
 }
 
@@ -123,33 +272,25 @@ Allowed geometry:
 - EquilateralTriangle
 - Collinear
 
-EquilateralTriangle:
+EquilateralTriangle shape:
+
 {
   "type": "EquilateralTriangle",
   "points": ["A", "B", "C"],
-  "side": {"value": 10, "unit": "cm"},
+  "side": {"value": <number>, "unit": "<unit>"},
   "orientation": "above"
 }
 
-Collinear:
+Collinear shape:
+
 {
   "type": "Collinear",
   "points": ["A", "B", "C"],
   "order": ["A", "B", "C"],
   "distances": [
-    {"between": ["A", "B"], "value": 20, "unit": "cm"},
-    {"between": ["B", "C"], "value": 30, "unit": "cm"}
+    {"between": ["A", "B"], "value": <number>, "unit": "<unit>"}
   ]
 }
-
-Allowed query:
-- type: net_force
-
-Allowed output:
-- magnitude
-- x_component
-- y_component
-- components
 
 Important rules:
 - Do not invent coordinates when the problem gives geometry.
@@ -157,6 +298,7 @@ Important rules:
 - Use points A, B, C when the problem names positions.
 - Map each charge to the point where it is placed.
 - Do not compute final force.
+- Return JSON only.
 """
 
 
