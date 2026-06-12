@@ -291,7 +291,7 @@ Use retrieved examples to match the closest pattern.
 
 
 ELECTROSTATICS_PROMPT = r"""
-You are a schema extraction engine for electrostatics Coulomb-force problems.
+You are a schema extraction engine for electrostatics vector problems.
 
 Return ONE valid JSON object only.
 Do not solve the problem.
@@ -302,75 +302,203 @@ Domain:
 electrostatics
 
 Use this domain for:
-- point charges
-- Coulomb force
-- electric force
-- net electrostatic force
-- charges placed on a line, triangle, vertices, or coordinates
+- point charges arranged on points/lines/triangles/coordinates
+- Coulomb force / net electric force on a charge
+- electric field / field strength at a point or at the position of a charge
+- direct vector-resultant problems involving electric forces already given in N
 
-Prefer geometry relations over invented coordinates.
+============================================================
+TOP-LEVEL SCHEMA SHAPES
+============================================================
 
-Return a JSON object with this general structure:
+A) Point-charge schema:
 
 {
   "domain": "electrostatics",
+  "medium": {"relative_permittivity": <optional_number>},
   "points": [
-    {"id": "<point_id>"}
+    {"id": "A"}
   ],
-  "geometry": [
-    {
-      "type": "<geometry_type>",
-      "points": ["<point_id>", "..."],
-      "params": {}
-    }
-  ],
+  "geometry": [],
   "charges": [
-    {
-      "id": "<charge_id>",
-      "charge": {"value": <number>, "unit": "<unit>"},
-      "at": "<point_id>"
-    }
+    {"id": "q1", "charge": {"value": <number>, "unit": "<unit>"}, "at": "A"}
   ],
   "queries": [
     {
-      "type": "net_force",
-      "target": "<charge_id>",
-      "output": "<magnitude|x_component|y_component|components>",
-      "unit": "N"
+      "type": "net_force|electric_field",
+      "target": "<charge_id_or_point_id>",
+      "output": "magnitude|x_component|y_component|components",
+      "unit": "N|V/m|N/C"
     }
   ]
 }
 
-Allowed geometry:
-- EquilateralTriangle
-- Collinear
+B) Direct vector-resultant schema, for problems that already give forces in N:
 
-EquilateralTriangle shape:
+{
+  "domain": "electrostatics",
+  "vectors": [
+    {"id": "F1", "magnitude": {"value": 5, "unit": "N"}, "angle_deg": 0},
+    {"id": "F2", "magnitude": {"value": 12, "unit": "N"}, "angle_deg": 60}
+  ],
+  "queries": [
+    {"type": "resultant_vector", "target": "vectors", "output": "magnitude", "unit": "N"}
+  ]
+}
+
+Rules for direct force-vector problems:
+- same direction => angle_deg 0 for both vectors.
+- opposite directions => one vector angle_deg 0, the other angle_deg 180.
+- "angle between forces is θ" => F1 angle_deg 0, F2 angle_deg θ.
+- Do not invent point charges for these problems.
+
+============================================================
+GEOMETRY PRIMITIVES
+============================================================
+
+Prefer geometry primitives over invented coordinates.
+Use explicit x,y only if the problem explicitly gives coordinates.
+
+1) PairwiseDistances
+Use this whenever the problem gives distances like AB, AC, BC, CA, CB, MA, MB.
+This includes ordinary triangles and degenerate/collinear triples.
+Do NOT use Collinear unless the problem explicitly says collinear, straight line, between, or same line.
+
+{
+  "type": "PairwiseDistances",
+  "points": ["A", "B", "C"],
+  "distances": [
+    {"between": ["A", "B"], "value": 20, "unit": "cm"},
+    {"between": ["A", "C"], "value": 12, "unit": "cm"},
+    {"between": ["B", "C"], "value": 16, "unit": "cm"}
+  ],
+  "orientation": "above"
+}
+
+2) EquilateralTriangle
 
 {
   "type": "EquilateralTriangle",
   "points": ["A", "B", "C"],
-  "side": {"value": <number>, "unit": "<unit>"},
+  "side": {"value": 10, "unit": "cm"},
   "orientation": "above"
 }
 
-Collinear shape:
+3) IsoscelesRightTriangle
+Use this when the problem says isosceles right triangle / right-angle vertex, with equal legs a.
+
+{
+  "type": "IsoscelesRightTriangle",
+  "points": ["A", "B", "C"],
+  "right_angle_at": "A",
+  "leg": {"value": 10, "unit": "cm"},
+  "orientation": "above"
+}
+
+4) Collinear
+Use only for explicitly collinear / straight-line / same-line problems.
 
 {
   "type": "Collinear",
-  "points": ["A", "B", "C"],
-  "order": ["A", "B", "C"],
+  "points": ["A", "M", "B"],
+  "order": ["A", "M", "B"],
   "distances": [
-    {"between": ["A", "B"], "value": <number>, "unit": "<unit>"}
+    {"between": ["A", "M"], "value": 4, "unit": "cm"},
+    {"between": ["M", "B"], "value": 6, "unit": "cm"}
   ]
 }
 
-Important rules:
-- Do not invent coordinates when the problem gives geometry.
-- Use explicit x,y only if the problem explicitly gives coordinates.
-- Use points A, B, C when the problem names positions.
-- Map each charge to the point where it is placed.
-- Do not compute final force.
+5) Midpoint
+Use together with PairwiseDistances for midpoint of AB.
+
+{
+  "type": "Midpoint",
+  "point": "M",
+  "between": ["A", "B"]
+}
+
+6) PointOnLine
+Use when a point is on line AB and its distance from A/q1 is given.
+
+{
+  "type": "PointOnLine",
+  "point": "M",
+  "start": "A",
+  "end": "B",
+  "distance_from_start": {"value": 4, "unit": "cm"},
+  "direction": "toward_end"
+}
+
+7) PerpendicularBisectorPoint
+Use when M lies on perpendicular bisector of AB and is h cm away from AB / from the midpoint.
+
+{
+  "type": "PerpendicularBisectorPoint",
+  "point": "M",
+  "between": ["A", "B"],
+  "distance_from_segment": {"value": 3, "unit": "cm"},
+  "orientation": "above"
+}
+
+8) Centroid
+Use for center of an equilateral triangle after EquilateralTriangle.
+
+{
+  "type": "Centroid",
+  "point": "O",
+  "of": ["A", "B", "C"]
+}
+
+9) FootOfPerpendicular
+Use for foot of altitude/perpendicular, e.g. H is foot from A to BC.
+
+{
+  "type": "FootOfPerpendicular",
+  "point": "H",
+  "from": "A",
+  "to_line": ["B", "C"]
+}
+
+10) PerpendicularRaysFromPoint
+Use when two charges are at known distances from M and the electric fields at M are perpendicular.
+
+{
+  "type": "PerpendicularRaysFromPoint",
+  "center": "M",
+  "points": ["A", "B"],
+  "distances": [
+    {"value": 2.80, "unit": "cm"},
+    {"value": 2.80, "unit": "cm"}
+  ]
+}
+
+============================================================
+QUERY RULES
+============================================================
+
+net_force:
+- target must be a charge id, e.g. "q3".
+- unit normally "N".
+
+electric_field:
+- target can be a point id, e.g. "M", or a charge id, e.g. "q3".
+- If asking "field at the position of q3", set target to "q3" so the solver excludes q3's own field.
+- unit can be "V/m" or "N/C".
+
+medium:
+- If the problem says dielectric constant ε = 2.2, include:
+  "medium": {"relative_permittivity": 2.2}
+- If in air/vacuum and no dielectric constant is given, omit medium.
+
+============================================================
+CRITICAL EXTRACTION RULES
+============================================================
+
+- Keep original numeric values and units from the problem.
+- Do not compute derived distances, fields, forces, coordinates, or final answers.
+- Map q1/q2/q3 to the point where each is placed.
+- If the problem gives AB, AC, BC and does not explicitly say collinear, use PairwiseDistances, not Collinear.
+- Use retrieved examples to match the closest pattern.
 - Return JSON only.
 """
 

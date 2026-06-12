@@ -61,6 +61,8 @@ CAPACITOR_STATE_KEYWORDS = {
 ELECTROSTATICS_KEYWORDS = {
     "electrostatic force": "force",
     "electric force": "force",
+    "electric forces": "resultant_vector",
+    "resultant force": "resultant_vector",
     "coulomb": "coulomb",
     "net force": "net_force",
     "force acting": "net_force",
@@ -140,10 +142,14 @@ def classify_domain(problem: str) -> DomainDecision:
     if has_capacitor:
         _add_unique(state_tags, "capacitor")
 
-    # Strong electrostatics boost only when charges have spatial arrangement.
-    if any(k in text for k in ["placed", "vertices", "triangle", "collinear", "at point", "coordinates"]):
-        if any(k in text for k in ["charge", "charges", "electric force", "electrostatic force", "net force"]):
+    # Strong electrostatics boost only when charges/fields have spatial arrangement.
+    if any(k in text for k in ["placed", "vertices", "triangle", "collinear", "at point", "coordinates", "midpoint", "perpendicular bisector"]):
+        if any(k in text for k in ["charge", "charges", "electric force", "electrostatic force", "net force", "electric field", "field strength"]):
             elec_score += 3
+
+    # Direct vector-resultant exercises are electrostatics vector problems, not scalar equations.
+    if "electric forces" in text and any(k in text for k in ["magnitude", "magnitudes", "same direction", "opposite", "angle"]):
+        elec_score += 3
 
     # Capacitor state requires a real event/state transition.
     # Plain capacitor formulas stay equations.

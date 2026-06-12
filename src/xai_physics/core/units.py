@@ -60,6 +60,16 @@ UNIT_TO_SI = {
     "mN": 1e-3,
     "uN": 1e-6,
     "μN": 1e-6,
+
+    # electric field
+    "V/m": 1.0,
+    "N/C": 1.0,
+    "kV/m": 1e3,
+
+    # angle / dimensionless helpers
+    "degree": 1.0,
+    "degrees": 1.0,
+    "deg": 1.0,
     "?F": 1e-6,
     "?C": 1e-6,
     "?J": 1e-6,

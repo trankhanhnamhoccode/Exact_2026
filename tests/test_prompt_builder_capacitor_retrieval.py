@@ -1,4 +1,4 @@
-﻿from xai_physics.llm.prompt_builder import build_schema_prompt
+from xai_physics.llm.prompt_builder import build_schema_prompt
 
 
 def test_capacitor_prompt_uses_domain_retrieval_base():
@@ -45,5 +45,6 @@ def test_electrostatics_prompt_does_not_use_capacitor_retrieval():
     built = build_schema_prompt(problem)
 
     assert built.domain_decision.domain == "electrostatics"
-    assert built.examples == []
+    assert built.examples
+    assert all(ex.get("domain") == "electrostatics" for ex in built.examples)
     assert "cap_td" not in built.prompt
