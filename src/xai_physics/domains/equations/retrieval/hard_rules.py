@@ -49,8 +49,25 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
     def add(formula_id: str, score: float) -> None:
         scores[formula_id] = max(scores.get(formula_id, 0.0), score)
 
+    is_scaling_question = any(
+        phrase in text
+        for phrase in [
+            "how many times",
+            "by what factor",
+            "ratio",
+            "doubled",
+            "tripled",
+            "halved",
+            "constant voltage",
+            "constant capacitance",
+            "change",
+            "changes",
+        ]
+    )
+
     if (
-        "capacitor" in text
+        not is_scaling_question
+        and "capacitor" in text
         and ("energy" in text or "stored" in text)
         and ("capacitance" in text or re.search(r"\bc\s*=", text))
         and ("voltage" in text or "potential difference" in text or re.search(r"\bu\s*=", text))
@@ -86,5 +103,35 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
 
     if ("instantaneous current" in text or "current at time" in text) and ("cos" in text or "omega" in text or "angular frequency" in text):
         add("harmonic_current_cos_time", 5.0)
+
+    if "electric field" in text and ("between plates" in text or "plate separation" in text) and ("voltage" in text or re.search(r"\bu\s*=", text)):
+        add("parallel_plate_field", 5.0)
+
+    if "energy density" in text and ("capacitor" in text or "electric field" in text or "between plates" in text):
+        add("capacitor_energy_density", 5.0)
+
+    if "constant voltage" in text and "energy" in text and ("capacitance" in text or "capacitor" in text):
+        add("capacitor_energy_scaling_constant_voltage", 5.0)
+
+    if "constant capacitance" in text and "energy" in text and "voltage" in text:
+        add("capacitor_energy_voltage_scaling_constant_capacitance", 5.0)
+
+    if "inductor" in text and ("energy" in text or "magnetic energy" in text):
+        add("inductor_energy", 5.0)
+
+    if "impedance" in text and ("reactance" in text or "xl" in text or "xc" in text):
+        add("ac_impedance", 5.0)
+
+    if "power" in text and "voltage" in text and ("resistance" in text or "resistor" in text):
+        add("power_voltage_resistance", 5.0)
+
+    if "magnetic flux" in text or "flux linkage" in text:
+        add("magnetic_flux_total", 5.0)
+
+    if "absolute error" in text and ("actual" in text or "measured" in text):
+        add("absolute_error_from_actual", 5.0)
+
+    if "lc" in text and "energy" in text and ("time" in text or "omega" in text or "cos" in text):
+        add("lc_electric_energy_time", 4.5)
 
     return scores
