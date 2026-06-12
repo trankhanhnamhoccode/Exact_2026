@@ -31,6 +31,7 @@ def _fmt(value: float) -> str:
 
 
 
+
 def _unit_factor(unit: str | None) -> float:
     if unit is None:
         return 1.0
@@ -40,6 +41,66 @@ def _unit_factor(unit: str | None) -> float:
         return 1.0
 
     aliases = {
+        # dimensionless
+        "times": 1.0,
+        "x": 1.0,
+        "%": 1.0,
+
+        # capacitance
+        "F": 1.0,
+        "mF": 1e-3,
+        "uF": 1e-6,
+        "?F": 1e-6,
+        "?F": 1e-6,
+        "?F": 1e-6,
+        "nF": 1e-9,
+        "pF": 1e-12,
+
+        # charge
+        "C": 1.0,
+        "mC": 1e-3,
+        "uC": 1e-6,
+        "?C": 1e-6,
+        "?C": 1e-6,
+        "?C": 1e-6,
+        "nC": 1e-9,
+        "pC": 1e-12,
+
+        # voltage/current/resistance/power/energy/frequency
+        "V": 1.0,
+        "kV": 1e3,
+        "mV": 1e-3,
+        "A": 1.0,
+        "mA": 1e-3,
+        "?": 1.0,
+        "?": 1.0,
+        "ohm": 1.0,
+        "ohms": 1.0,
+        "W": 1.0,
+        "mW": 1e-3,
+        "J": 1.0,
+        "mJ": 1e-3,
+        "uJ": 1e-6,
+        "?J": 1e-6,
+        "?J": 1e-6,
+        "?J": 1e-6,
+        "nJ": 1e-9,
+        "Hz": 1.0,
+        "kHz": 1e3,
+        "rad/s": 1.0,
+
+        # inductance
+        "H": 1.0,
+        "mH": 1e-3,
+        "uH": 1e-6,
+        "?H": 1e-6,
+        "?H": 1e-6,
+        "?H": 1e-6,
+
+        # geometry / field
+        "m": 1.0,
+        "cm": 1e-2,
+        "mm": 1e-3,
         "m2": 1.0,
         "m^2": 1.0,
         "m?": 1.0,
@@ -60,9 +121,6 @@ def _unit_factor(unit: str | None) -> float:
         "J/m?": 1.0,
         "V/m": 1.0,
         "N/C": 1.0,
-        "times": 1.0,
-        "x": 1.0,
-        "%": 1.0,
     }
     if normalized in aliases:
         return aliases[normalized]
@@ -681,6 +739,421 @@ def _solve_series_capacitance_unknown(schema: dict[str, Any], formula: str) -> S
     result.answer = _answer(c_unknown, query, "capacitance", _raw_unit(c_known_obj, "F"))
     return result
 
+
+def _solve_inductor_energy(schema: dict[str, Any], formula: str) -> SolveResult:
+    w_query = _query_obj(schema, "energy")
+    l_query = _query_obj(schema, "inductance")
+    i_query = _query_obj(schema, "current")
+
+    try:
+        if w_query is not None:
+            l = _required_si(schema, "inductance", "H")
+            i = _required_si(schema, "current", "A")
+            value = 0.5 * l * i * i
+            query = w_query
+            quantity_type = "energy"
+            default_unit = "J"
+        elif i_query is not None:
+            w = _required_si(schema, "energy", "J")
+            l = _required_si(schema, "inductance", "H")
+            if l == 0:
+                return _fail("Inductance must be non-zero when solving current.", formula)
+            value = math.sqrt(2 * w / l)
+            query = i_query
+            quantity_type = "current"
+            default_unit = "A"
+        elif l_query is not None:
+            w = _required_si(schema, "energy", "J")
+            i = _required_si(schema, "current", "A")
+            if i == 0:
+                return _fail("Current must be non-zero when solving inductance.", formula)
+            value = 2 * w / (i * i)
+            query = l_query
+            quantity_type = "inductance"
+            default_unit = "H"
+        else:
+            return _fail("No supported query object for W = 1/2*L*I^2.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use inductor magnetic energy W = 1/2*L*I^2.")
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
+def _solve_lc_resonance_frequency(schema: dict[str, Any], formula: str) -> SolveResult:
+    f_query = _query_obj(schema, "frequency")
+    c_query = _query_obj(schema, "capacitance")
+    l_query = _query_obj(schema, "inductance")
+
+    try:
+        if f_query is not None:
+            l = _required_si(schema, "inductance", "H")
+            c = _required_si(schema, "capacitance", "F")
+            if l <= 0 or c <= 0:
+                return _fail("L and C must be positive.", formula)
+            value = 1.0 / (2.0 * math.pi * math.sqrt(l * c))
+            query = f_query
+            quantity_type = "frequency"
+            default_unit = "Hz"
+        elif c_query is not None:
+            f = _required_si(schema, "frequency", "Hz")
+            l = _required_si(schema, "inductance", "H")
+            if f <= 0 or l <= 0:
+                return _fail("f and L must be positive.", formula)
+            value = 1.0 / ((2.0 * math.pi * f) ** 2 * l)
+            query = c_query
+            quantity_type = "capacitance"
+            default_unit = "uF"
+        elif l_query is not None:
+            f = _required_si(schema, "frequency", "Hz")
+            c = _required_si(schema, "capacitance", "F")
+            if f <= 0 or c <= 0:
+                return _fail("f and C must be positive.", formula)
+            value = 1.0 / ((2.0 * math.pi * f) ** 2 * c)
+            query = l_query
+            quantity_type = "inductance"
+            default_unit = "H"
+        else:
+            return _fail("No supported query object for LC resonance frequency.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use LC resonance formula f = 1/(2*pi*sqrt(L*C)).")
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
+def _solve_lc_resonance_angular_frequency(schema: dict[str, Any], formula: str) -> SolveResult:
+    omega_query = _query_obj(schema, "angular_frequency")
+    c_query = _query_obj(schema, "capacitance")
+    l_query = _query_obj(schema, "inductance")
+
+    try:
+        if omega_query is not None:
+            l = _required_si(schema, "inductance", "H")
+            c = _required_si(schema, "capacitance", "F")
+            if l <= 0 or c <= 0:
+                return _fail("L and C must be positive.", formula)
+            value = 1.0 / math.sqrt(l * c)
+            query = omega_query
+            quantity_type = "angular_frequency"
+            default_unit = "rad/s"
+        elif c_query is not None:
+            omega = _required_si(schema, "angular_frequency", "rad/s")
+            l = _required_si(schema, "inductance", "H")
+            if omega <= 0 or l <= 0:
+                return _fail("omega and L must be positive.", formula)
+            value = 1.0 / (omega * omega * l)
+            query = c_query
+            quantity_type = "capacitance"
+            default_unit = "uF"
+        elif l_query is not None:
+            omega = _required_si(schema, "angular_frequency", "rad/s")
+            c = _required_si(schema, "capacitance", "F")
+            if omega <= 0 or c <= 0:
+                return _fail("omega and C must be positive.", formula)
+            value = 1.0 / (omega * omega * c)
+            query = l_query
+            quantity_type = "inductance"
+            default_unit = "H"
+        else:
+            return _fail("No supported query object for LC angular resonance.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use LC angular resonance formula omega = 1/sqrt(L*C).")
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
+def _solve_ohm_law(schema: dict[str, Any], formula: str) -> SolveResult:
+    u_query = _query_obj(schema, "voltage")
+    i_query = _query_obj(schema, "current")
+    r_query = _query_obj(schema, "resistance")
+
+    try:
+        if u_query is not None:
+            i = _required_si(schema, "current", "A")
+            r = _required_si(schema, "resistance", "?")
+            value = i * r
+            query = u_query
+            quantity_type = "voltage"
+            default_unit = "V"
+        elif i_query is not None:
+            u = _required_si(schema, "voltage", "V")
+            r = _required_si(schema, "resistance", "?")
+            if r == 0:
+                return _fail("Resistance must be non-zero when solving current.", formula)
+            value = u / r
+            query = i_query
+            quantity_type = "current"
+            default_unit = "A"
+        elif r_query is not None:
+            u = _required_si(schema, "voltage", "V")
+            i = _required_si(schema, "current", "A")
+            if i == 0:
+                return _fail("Current must be non-zero when solving resistance.", formula)
+            value = u / i
+            query = r_query
+            quantity_type = "resistance"
+            default_unit = "?"
+        else:
+            return _fail("No supported query object for U = I*R.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use Ohm's law U = I*R.")
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
+def _solve_impedance_voltage_current(schema: dict[str, Any], formula: str) -> SolveResult:
+    u_query = _query_obj(schema, "voltage")
+    i_query = _query_obj(schema, "current")
+    z_query = _query_obj(schema, "impedance")
+
+    try:
+        if u_query is not None:
+            i = _required_si(schema, "current", "A")
+            z = _required_si(schema, "impedance", "?")
+            value = i * z
+            query = u_query
+            quantity_type = "voltage"
+            default_unit = "V"
+        elif i_query is not None:
+            u = _required_si(schema, "voltage", "V")
+            z = _required_si(schema, "impedance", "?")
+            if z == 0:
+                return _fail("Impedance must be non-zero when solving current.", formula)
+            value = u / z
+            query = i_query
+            quantity_type = "current"
+            default_unit = "A"
+        elif z_query is not None:
+            u = _required_si(schema, "voltage", "V")
+            i = _required_si(schema, "current", "A")
+            if i == 0:
+                return _fail("Current must be non-zero when solving impedance.", formula)
+            value = u / i
+            query = z_query
+            quantity_type = "impedance"
+            default_unit = "?"
+        else:
+            return _fail("No supported query object for U = I*Z.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use impedance relation U = I*Z.")
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
+def _solve_power_voltage_current(schema: dict[str, Any], formula: str) -> SolveResult:
+    p_query = _query_obj(schema, "power")
+    u_query = _query_obj(schema, "voltage")
+    i_query = _query_obj(schema, "current")
+
+    try:
+        if p_query is not None:
+            u = _required_si(schema, "voltage", "V")
+            i = _required_si(schema, "current", "A")
+            value = u * i
+            query = p_query
+            quantity_type = "power"
+            default_unit = "W"
+        elif u_query is not None:
+            p = _required_si(schema, "power", "W")
+            i = _required_si(schema, "current", "A")
+            if i == 0:
+                return _fail("Current must be non-zero when solving voltage.", formula)
+            value = p / i
+            query = u_query
+            quantity_type = "voltage"
+            default_unit = "V"
+        elif i_query is not None:
+            p = _required_si(schema, "power", "W")
+            u = _required_si(schema, "voltage", "V")
+            if u == 0:
+                return _fail("Voltage must be non-zero when solving current.", formula)
+            value = p / u
+            query = i_query
+            quantity_type = "current"
+            default_unit = "A"
+        else:
+            return _fail("No supported query object for P = U*I.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use electric power formula P = U*I.")
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
+def _solve_power_voltage_resistance(schema: dict[str, Any], formula: str) -> SolveResult:
+    p_query = _query_obj(schema, "power")
+    u_query = _query_obj(schema, "voltage")
+    r_query = _query_obj(schema, "resistance")
+
+    try:
+        if p_query is not None:
+            u = _required_si(schema, "voltage", "V")
+            r = _required_si(schema, "resistance", "?")
+            if r == 0:
+                return _fail("Resistance must be non-zero when solving power.", formula)
+            value = u * u / r
+            query = p_query
+            quantity_type = "power"
+            default_unit = "W"
+        elif u_query is not None:
+            p = _required_si(schema, "power", "W")
+            r = _required_si(schema, "resistance", "?")
+            value = math.sqrt(p * r)
+            query = u_query
+            quantity_type = "voltage"
+            default_unit = "V"
+        elif r_query is not None:
+            u = _required_si(schema, "voltage", "V")
+            p = _required_si(schema, "power", "W")
+            if p == 0:
+                return _fail("Power must be non-zero when solving resistance.", formula)
+            value = u * u / p
+            query = r_query
+            quantity_type = "resistance"
+            default_unit = "?"
+        else:
+            return _fail("No supported query object for P = U^2/R.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use resistor/resonance power formula P = U^2/R.")
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
+def _solve_power_current_resistance(schema: dict[str, Any], formula: str) -> SolveResult:
+    p_query = _query_obj(schema, "power")
+    i_query = _query_obj(schema, "current")
+    r_query = _query_obj(schema, "resistance")
+
+    try:
+        if p_query is not None:
+            i = _required_si(schema, "current", "A")
+            r = _required_si(schema, "resistance", "?")
+            value = i * i * r
+            query = p_query
+            quantity_type = "power"
+            default_unit = "W"
+        elif i_query is not None:
+            p = _required_si(schema, "power", "W")
+            r = _required_si(schema, "resistance", "?")
+            if r == 0:
+                return _fail("Resistance must be non-zero when solving current.", formula)
+            value = math.sqrt(p / r)
+            query = i_query
+            quantity_type = "current"
+            default_unit = "A"
+        elif r_query is not None:
+            p = _required_si(schema, "power", "W")
+            i = _required_si(schema, "current", "A")
+            if i == 0:
+                return _fail("Current must be non-zero when solving resistance.", formula)
+            value = p / (i * i)
+            query = r_query
+            quantity_type = "resistance"
+            default_unit = "?"
+        else:
+            return _fail("No supported query object for P = I^2*R.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use resistor power formula P = I^2*R.")
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
+def _solve_ac_impedance(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "impedance")
+    if query is None:
+        return _fail("Only impedance query is supported for Z = sqrt(R^2 + (XL-XC)^2).", formula)
+
+    try:
+        r = _required_si(schema, "resistance", "?")
+        xl = _required_si(schema, "inductive_reactance", "?")
+        xc = _required_si(schema, "capacitive_reactance", "?")
+        value = math.sqrt(r * r + (xl - xc) * (xl - xc))
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use series RLC impedance Z = sqrt(R^2 + (XL-XC)^2).")
+    result.answer = _answer(value, query, "impedance", "?")
+    return result
+
+
+def _solve_power_factor(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("power_factor", "ratio")) or _query_obj(schema)
+    try:
+        r = _required_si(schema, "resistance", "?")
+        z = _required_si(schema, "impedance", "?")
+        if z == 0:
+            return _fail("Impedance must be non-zero when solving power factor.", formula)
+        value = r / z
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use power factor cos(phi) = R/Z.")
+    result.answer = _answer(value, query, "power_factor", "-")
+    return result
+
+
+def _solve_quality_factor(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("quality_factor", "ratio")) or _query_obj(schema)
+    try:
+        l = _required_si(schema, "inductance", "H")
+        c = _required_si(schema, "capacitance", "F")
+        r = _required_si(schema, "resistance", "?")
+        if c <= 0 or r == 0:
+            return _fail("C must be positive and R must be non-zero.", formula)
+        value = math.sqrt(l / c) / r
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use series RLC quality factor Q = sqrt(L/C)/R.")
+    result.answer = _answer(value, query, "quality_factor", "-")
+    return result
+
+
+def _solve_frequency_scaling_for_resonance(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("frequency_factor", "ratio")) or _query_obj(schema)
+
+    try:
+        xl = _required_si(schema, "inductive_reactance", "?")
+        xc = _required_si(schema, "capacitive_reactance", "?")
+        if xl <= 0 or xc <= 0:
+            return _fail("XL and XC must be positive.", formula)
+        value = math.sqrt(xc / xl)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step(
+        "Formula selected",
+        "Since XL is proportional to omega and XC is proportional to 1/omega, resonance factor k = sqrt(XC/XL).",
+    )
+    result.answer = _answer_ratio(value, query)
+    return result
+
 def solve_schema(schema: dict[str, Any]) -> SolveResult:
     formula = _formula_id(schema)
 
@@ -699,6 +1172,20 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "capacitor_energy_charge_scaling_constant_capacitance": _solve_capacitor_energy_charge_scaling_constant_capacitance,
         "series_capacitance_unknown": _solve_series_capacitance_unknown,
         "capacitor_series_unknown": _solve_series_capacitance_unknown,
+        "inductor_energy": _solve_inductor_energy,
+        "lc_magnetic_energy_inductor": _solve_inductor_energy,
+        "lc_resonance_frequency": _solve_lc_resonance_frequency,
+        "lc_resonance_angular_frequency": _solve_lc_resonance_angular_frequency,
+        "resonant_impedance_equals_resistance": _solve_ohm_law,
+        "ohm_law": _solve_ohm_law,
+        "impedance_voltage_current": _solve_impedance_voltage_current,
+        "power_voltage_current": _solve_power_voltage_current,
+        "power_voltage_resistance": _solve_power_voltage_resistance,
+        "power_current_resistance": _solve_power_current_resistance,
+        "ac_impedance": _solve_ac_impedance,
+        "power_factor": _solve_power_factor,
+        "quality_factor": _solve_quality_factor,
+        "frequency_scaling_for_resonance": _solve_frequency_scaling_for_resonance,
     }
 
     handler = handlers.get(formula)
