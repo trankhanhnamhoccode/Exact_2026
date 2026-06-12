@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any
 
@@ -17,6 +17,7 @@ SUPPORTED_EVENTS = {
     "AreaScale",
     "ParallelRedistribution",
     "ShortCircuit",
+    "ConnectToInductor",
 }
 
 SUPPORTED_QUERIES = {
@@ -197,6 +198,7 @@ def validate_schema(schema: dict[str, Any]) -> None:
 
     for i, query in enumerate(queries):
         _validate_query(query, i, entity_ids)
+
 
 
 

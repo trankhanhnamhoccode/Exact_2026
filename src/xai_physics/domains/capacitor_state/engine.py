@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any, Optional
 
@@ -13,6 +13,7 @@ from xai_physics.domains.capacitor_state.events import (
     DistanceScale,
     InsertDielectric,
     ShortCircuit,
+    ConnectToInductor,
 )
 from xai_physics.domains.capacitor_state.redistribution import ParallelRedistribution
 from xai_physics.domains.capacitor_state.contract import validate_schema
@@ -99,6 +100,10 @@ def _apply_single_cap_event(event_schema: dict[str, Any], system: SystemState) -
     if event_type == "ShortCircuit":
         return ShortCircuit().apply(cap)
 
+    if event_type == "ConnectToInductor":
+        ConnectToInductor().apply(cap)
+        return
+
     raise ValueError(f"Unsupported single-capacitor event: {event_type}")
 
 
@@ -136,6 +141,19 @@ def _answer_query(query: dict[str, Any], system: SystemState) -> str:
     output_unit = query.get("unit")
 
     if target == "system":
+
+        if qtype == "energy":
+
+            value_si = sum(
+
+                cap.energy_J()
+
+                for cap in system.capacitors.values()
+
+            )
+
+            return _format_value(value_si, "J", output_unit)
+
         caps = list(system.capacitors.values())
         if not caps:
             raise ValueError("System has no capacitors.")
@@ -255,4 +273,6 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         result.status = "solve_failed"
         result.error = str(exc)
         return result
+
+
 

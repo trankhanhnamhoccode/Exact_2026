@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 
 UNIT_TO_SI = {
@@ -60,13 +60,64 @@ UNIT_TO_SI = {
     "mN": 1e-3,
     "uN": 1e-6,
     "μN": 1e-6,
+    "?F": 1e-6,
+    "?C": 1e-6,
+    "?J": 1e-6,
+    "?N": 1e-6,
+    "?m": 1e-6,
 }
 
 
 def normalize_unit(unit: str) -> str:
-    unit = unit.strip()
+    # AUTO_MICRO_UNIT_NORMALIZATION
+    unit = str(unit).strip()
+
+    # Normalize common micro symbols and corrupted Windows/terminal variants.
+    unit = unit.replace("?", "?")
+    unit = unit.replace("?F", "uF")
+    unit = unit.replace("?C", "uC")
+    unit = unit.replace("?J", "uJ")
+    unit = unit.replace("?N", "uN")
+    unit = unit.replace("?m", "um")
+
+    if unit in {"?F", "?F"}:
+        return "uF"
+    if unit in {"?C", "?C"}:
+        return "uC"
+    if unit in {"?J", "?J"}:
+        return "uJ"
+    if unit in {"?N", "?N"}:
+        return "uN"
+    if unit in {"?m", "?m"}:
+        return "um"
+
+    unit = str(unit).strip()
+
+    # Normalize common micro symbols / mojibake.
     unit = unit.replace("µ", "μ")
+
+    # Windows / terminal encoding may corrupt μ into ?.
+    # Treat exact ?F, ?C, ?J, ?N, ?m as micro-units.
+    if unit in {"?F", "？F"}:
+        return "uF"
+    if unit in {"?C", "？C"}:
+        return "uC"
+    if unit in {"?J", "？J"}:
+        return "uJ"
+    if unit in {"?N", "？N"}:
+        return "uN"
+    if unit in {"?m", "？m"}:
+        return "um"
+
+    # Normalize micro symbol to ASCII aliases already supported by UNIT_TO_SI.
+    unit = unit.replace("μF", "uF")
+    unit = unit.replace("μC", "uC")
+    unit = unit.replace("μJ", "uJ")
+    unit = unit.replace("μN", "uN")
+    unit = unit.replace("μm", "um")
+
     unit = unit.replace("Ohm", "ohm")
+
     return unit
 
 

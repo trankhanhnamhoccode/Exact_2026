@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol
@@ -163,4 +163,22 @@ class ShortCircuit:
         cap.voltage_V = 0.0
         cap.charge_C = 0.0
         cap.connected_to_source = False
+        return cap
+
+
+class ConnectToInductor:
+    """
+    Connect a charged capacitor to an ideal inductor.
+
+    Physical meaning:
+    - The LC circuit oscillates.
+    - Total oscillation energy is conserved.
+    - For our current capacitor_state engine, this event is a semantic no-op:
+      the energy query after this event should return the capacitor energy
+      just before connection.
+    """
+
+    def apply(self, cap):
+        cap.connected_to_source = False
+        cap.infer_missing()
         return cap

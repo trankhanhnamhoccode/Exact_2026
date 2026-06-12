@@ -177,6 +177,19 @@ Rules:
 - If the problem says opposite polarity, use polarity = "opposite" only if explicitly stated.
 - Do not use ParallelRedistribution for series connection.
 
+7. ShortCircuit
+
+Use when the plates/terminals of a capacitor are short-circuited.
+
+{
+  "type": "ShortCircuit",
+  "apply_to": ["C1"]
+}
+
+Rules:
+- Use this for phrases such as "short-circuited", "short circuit", or "plates are connected by a wire".
+- Do not compute final charge or energy in the schema.
+
 ============================================================
 QUERIES
 ============================================================
@@ -306,3 +319,4 @@ DOMAIN_PROMPTS = {
     "capacitor_state": CAPACITOR_STATE_PROMPT,
     "electrostatics": ELECTROSTATICS_PROMPT,
 }
+
