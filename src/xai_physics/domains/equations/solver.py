@@ -38,7 +38,22 @@ def _unit_factor(unit: str | None) -> float:
     if unit is None:
         return 1.0
 
-    normalized = normalize_unit(str(unit))
+    raw = str(unit).strip().replace(" ", "")
+
+    # IMPORTANT:
+    # Check raw resistance units before normalize_unit().
+    # Some text normalization paths can turn Greek Omega "?" into a degree-like token,
+    # which makes 40 ? behave like 40 degrees = 0.698 rad.
+    raw_aliases = {
+        "?": 1.0,
+        "?": 1.0,
+        "ohm": 1.0,
+        "ohms": 1.0,
+    }
+    if raw in raw_aliases:
+        return raw_aliases[raw]
+
+    normalized = normalize_unit(raw)
     if normalized in (None, "", "-", "1", "unitless", "none"):
         return 1.0
 
