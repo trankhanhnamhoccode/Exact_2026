@@ -14,6 +14,49 @@ def _quantity_to_si(data: dict[str, Any]) -> float:
     return to_si(float(data["value"]), str(data["unit"]))
 
 
+def _derived_point_ids(schema: dict[str, Any]) -> list[str]:
+    ids: list[str] = []
+    for geom in schema.get("geometry", []) or []:
+        if geom.get("type") in {"Midpoint", "PerpendicularBisectorPoint", "Centroid", "FootOfPerpendicular"}:
+            point = geom.get("point")
+            if isinstance(point, str) and point not in ids:
+                ids.append(point)
+    return ids
+
+
+def _repair_missing_point_aliases(schema: dict[str, Any], coords: dict[str, Vec2]) -> None:
+    """Copy coordinates from obvious LLM aliases like m/h to requested M.
+
+    Qwen sometimes emits both point M and point m/h, builds geometry for m/h,
+    but asks the query at M. Do not fail geometry for that; map M to the only
+    derived coordinate when it is unambiguous.
+    """
+    point_ids = {p.get("id") for p in schema.get("points", []) if isinstance(p, dict)}
+    missing = sorted(pid for pid in point_ids if isinstance(pid, str) and pid not in coords)
+    if not missing:
+        return
+
+    derived = [pid for pid in _derived_point_ids(schema) if pid in coords]
+
+    for pid in missing:
+        candidates: list[str] = []
+        low = pid.lower()
+        if low in coords and low != pid:
+            candidates.append(low)
+
+        if not candidates:
+            # Prefer one-letter lowercase placeholders produced by the LLM.
+            lower_derived = [d for d in derived if d != pid and len(d) == 1 and d.islower()]
+            if len(lower_derived) == 1:
+                candidates.append(lower_derived[0])
+
+        if not candidates and len(derived) == 1 and derived[0] != pid:
+            candidates.append(derived[0])
+
+        if candidates:
+            coords[pid] = coords[candidates[0]]
+
+
 def _explicit_points(schema: dict[str, Any]) -> dict[str, Vec2]:
     coords: dict[str, Vec2] = {}
 
@@ -520,6 +563,8 @@ def build_coordinates(schema: dict[str, Any]) -> dict[str, Vec2]:
             changed = builder(geom, coords, dist_map) or changed
         if not changed:
             break
+
+    _repair_missing_point_aliases(schema, coords)
 
     point_ids = {p["id"] for p in schema.get("points", [])}
     missing = sorted(point_ids - set(coords))

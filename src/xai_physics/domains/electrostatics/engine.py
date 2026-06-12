@@ -38,6 +38,80 @@ def _quantity_to_si(data: dict[str, Any]) -> float:
     return to_si(float(data["value"]), str(data["unit"]))
 
 
+def _point_ids(schema: dict[str, Any]) -> set[str]:
+    return {p.get("id") for p in schema.get("points", []) if isinstance(p, dict) and isinstance(p.get("id"), str)}
+
+
+def _charge_point_map(schema: dict[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for ch in schema.get("charges", []) or []:
+        if isinstance(ch, dict) and isinstance(ch.get("id"), str) and isinstance(ch.get("at"), str):
+            out[ch["id"]] = ch["at"]
+    return out
+
+
+def _derived_focus_points(schema: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    for geom in schema.get("geometry", []) or []:
+        if not isinstance(geom, dict):
+            continue
+        if geom.get("type") in {"Midpoint", "PerpendicularBisectorPoint", "Centroid", "FootOfPerpendicular"}:
+            point = geom.get("point")
+            if isinstance(point, str) and point not in out:
+                out.append(point)
+    return out
+
+
+def _repair_schema_before_validation(schema: dict[str, Any]) -> None:
+    """Fix common LLM/extractor slips without changing physics.
+
+    - Midpoint point=m/h but query/target is M/H.
+    - Midpoint point accidentally equals endpoint A/B.
+    - Electric-field target is a source point while a derived measurement point exists.
+    """
+    point_ids = _point_ids(schema)
+    charge_at = _charge_point_map(schema)
+    charge_points = set(charge_at.values())
+
+    query_point_targets: list[str] = []
+    for query in schema.get("queries", []) or []:
+        if not isinstance(query, dict):
+            continue
+        qtype = query.get("type")
+        target = query.get("target")
+        if qtype == "electric_field" and isinstance(target, str) and target in point_ids:
+            query_point_targets.append(target)
+        elif qtype == "net_force" and isinstance(target, str) and target in charge_at:
+            query_point_targets.append(charge_at[target])
+
+    # Repair midpoint target names.
+    for geom in schema.get("geometry", []) or []:
+        if not isinstance(geom, dict) or geom.get("type") != "Midpoint":
+            continue
+        between = geom.get("between") or []
+        current = geom.get("point")
+        desired = [p for p in query_point_targets if p in point_ids and p not in between]
+        if not desired:
+            continue
+        wanted = desired[0]
+        if current not in point_ids or current in between or (isinstance(current, str) and current.islower()):
+            geom["point"] = wanted
+
+    # Repair electric-field target when it points at a source charge point but
+    # the problem also has a clear derived measurement point M/H/O.
+    focus = _derived_focus_points(schema)
+    non_charge_focus = [p for p in focus if p in point_ids and p not in charge_points]
+    # Prefer conventional uppercase measurement points.
+    non_charge_focus.sort(key=lambda p: (not p.isupper(), p))
+
+    for query in schema.get("queries", []) or []:
+        if not isinstance(query, dict) or query.get("type") != "electric_field":
+            continue
+        target = query.get("target")
+        if isinstance(target, str) and target in charge_points and non_charge_focus:
+            query["target"] = non_charge_focus[0]
+
+
 def _build_points(schema: dict[str, Any]) -> dict[str, Point]:
     coords = build_coordinates(schema)
     return {point_id: Point(id=point_id, position_m=pos) for point_id, pos in coords.items()}
@@ -239,6 +313,7 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
     result = SolveResult(status="solved", domain="electrostatics")
 
     try:
+        _repair_schema_before_validation(schema)
         validate_schema(schema)
 
         qtypes = [q.get("type") for q in schema.get("queries", [])]

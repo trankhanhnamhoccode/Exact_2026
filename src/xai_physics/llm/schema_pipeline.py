@@ -9,6 +9,7 @@ from xai_physics.llm.json_extractor import extract_json_object
 from xai_physics.llm.prompt_builder import PromptBuildResult, build_schema_prompt
 from xai_physics.schema_solver import solve_schema
 from xai_physics.domains.electrostatics.text_extractor import extract_electrostatics_schema_from_text
+from xai_physics.domains.equations.text_extractor import extract_equations_schema_from_text
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,8 @@ def solve_problem_with_llm(
     raw_output = client.generate(prompt_result.prompt)
 
     deterministic_schema = extract_electrostatics_schema_from_text(problem)
+    if deterministic_schema is None:
+        deterministic_schema = extract_equations_schema_from_text(problem)
 
     try:
         schema = extract_json_object(raw_output)
@@ -49,8 +52,8 @@ def solve_problem_with_llm(
             result = solve_schema(deterministic_schema)
             result.add_step("Prompt built", f"Domain: {prompt_result.domain_decision.domain}")
             result.add_step(
-                "Electrostatics deterministic repair",
-                "LLM JSON parsing failed, so a canonical electrostatics schema was extracted from the problem text.",
+                "Deterministic text repair",
+                "LLM JSON parsing failed, so a canonical schema was extracted from the problem text.",
             )
             return SchemaPipelineResult(
                 solve_result=result,
@@ -84,8 +87,8 @@ def solve_problem_with_llm(
     result.add_step("Prompt built", f"Domain: {prompt_result.domain_decision.domain}")
     if deterministic_schema is not None:
         result.add_step(
-            "Electrostatics deterministic repair",
-            "Canonical electrostatics schema was extracted from the problem text and used instead of the raw LLM schema.",
+            "Deterministic text repair",
+            "A canonical schema was extracted from the problem text and used instead of the raw LLM schema.",
         )
     else:
         result.add_step("LLM schema extracted", "Schema JSON was parsed and sent to schema_solver.")

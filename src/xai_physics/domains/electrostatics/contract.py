@@ -40,23 +40,106 @@ def _err(message: str) -> None:
     raise ElectrostaticsSchemaValidationError(message)
 
 
+def _coerce_number(value: Any) -> float | int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        text = value.strip().replace(",", "")
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    return None
+
+
+def _is_length_path(path: str) -> bool:
+    p = path.lower()
+    return any(k in p for k in [
+        ".x", ".y", ".side", ".leg", ".distance", "distances[",
+        "distance_from", "distance_from_segment",
+    ])
+
+
+def _is_charge_path(path: str) -> bool:
+    p = path.lower()
+    return ".charge" in p or p.endswith("charge")
+
+
+def _is_force_path(path: str) -> bool:
+    p = path.lower()
+    return ".magnitude" in p or "vectors[" in p or "net_force" in p or "resultant_vector" in p
+
+
+def _is_field_path(path: str) -> bool:
+    return "electric_field" in path.lower()
+
+
+def _default_si_unit_for_path(path: str) -> str:
+    if _is_charge_path(path):
+        return "C"
+    if _is_length_path(path):
+        return "m"
+    if _is_force_path(path):
+        return "N"
+    if _is_field_path(path):
+        return "V/m"
+    return ""
+
+
+def _contextual_normalize_unit(unit: Any, path: str) -> str:
+    raw = "" if unit is None else str(unit).strip()
+    raw_lower = raw.lower()
+
+    # Qwen often emits "c" for cm in geometry, while "c" in charge context means Coulomb.
+    if raw_lower == "c":
+        if _is_length_path(path):
+            return "cm"
+        if _is_charge_path(path):
+            return "C"
+
+    if raw_lower == "n" and _is_force_path(path):
+        return "N"
+
+    if raw_lower == "v/m" and _is_field_path(path):
+        return "V/m"
+    if raw_lower == "n/c" and _is_field_path(path):
+        return "N/C"
+
+    normalized = normalize_unit(raw)
+    if normalized in UNIT_TO_SI:
+        return normalized
+
+    # Missing / unknown / unitless => assume value is already SI by context.
+    fallback = _default_si_unit_for_path(path)
+    if fallback:
+        return fallback
+
+    return ""
+
+
 def _is_quantity_dict(data: Any) -> bool:
-    return (
-        isinstance(data, dict)
-        and "value" in data
-        and "unit" in data
-        and isinstance(data["value"], (int, float))
-        and isinstance(data["unit"], str)
-    )
+    return isinstance(data, dict) and "value" in data and _coerce_number(data.get("value")) is not None
 
 
 def _validate_quantity(data: Any, path: str) -> None:
-    if not _is_quantity_dict(data):
-        _err(f"{path} must be a quantity dict with numeric value and string unit.")
+    if not isinstance(data, dict):
+        _err(f"{path} must be a quantity object.")
 
-    unit = normalize_unit(data["unit"])
-    if unit not in UNIT_TO_SI:
-        _err(f"{path}.unit is unsupported: {data['unit']}")
+    value = _coerce_number(data.get("value"))
+    if value is None:
+        _err(f"{path}.value must be numeric.")
+
+    # Mutate schema so downstream engine receives clean numeric values/units.
+    data["value"] = value
+    unit = _contextual_normalize_unit(data.get("unit"), path)
+    data["unit"] = unit
+
+    if unit and unit not in UNIT_TO_SI:
+        _err(f"{path}.unit is unsupported after normalization: {unit!r}")
 
 
 def _query_types(schema: dict[str, Any]) -> list[str]:
@@ -129,8 +212,7 @@ def _validate_distance_item(item: Any, path: str, point_ids: set[str]) -> None:
         if p not in point_ids:
             _err(f"{path}.between references unknown point: {p}")
 
-    pseudo_q = {"value": item.get("value"), "unit": item.get("unit")}
-    _validate_quantity(pseudo_q, path)
+    _validate_quantity(item, path)
 
 
 def _validate_geometry(schema: dict[str, Any], point_ids: set[str]) -> None:
@@ -279,8 +361,10 @@ def _validate_medium(schema: dict[str, Any]) -> None:
     if not isinstance(medium, dict):
         _err("schema.medium must be an object if provided.")
     eps = medium.get("relative_permittivity", medium.get("epsilon_r", 1.0))
-    if not isinstance(eps, (int, float)) or eps <= 0:
+    eps_num = _coerce_number(eps)
+    if eps_num is None or eps_num <= 0:
         _err("schema.medium.relative_permittivity must be a positive number.")
+    medium["relative_permittivity"] = eps_num
 
 
 def _validate_charges(schema: dict[str, Any], point_ids: set[str], required: bool = True) -> set[str]:
@@ -389,10 +473,18 @@ def _validate_queries(
             _err(f"{path}.output is unsupported: {output}")
 
         unit = query.get("unit")
-        if unit is not None:
-            unit = normalize_unit(str(unit))
-            if unit not in UNIT_TO_SI:
-                _err(f"{path}.unit is unsupported: {query.get('unit')}")
+        if qtype == "electric_field":
+            default_query_unit = "V/m"
+        elif qtype in {"net_force", "resultant_vector"}:
+            default_query_unit = "N"
+        else:
+            default_query_unit = ""
+
+        if unit is None:
+            query["unit"] = default_query_unit
+        else:
+            normalized = _contextual_normalize_unit(unit, f"{path}.{qtype}.unit")
+            query["unit"] = normalized if normalized in UNIT_TO_SI else default_query_unit
 
 
 def validate_schema(schema: dict[str, Any]) -> None:

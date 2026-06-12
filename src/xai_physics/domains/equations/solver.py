@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import ast
 import math
 from typing import Any
 
@@ -28,6 +29,59 @@ def _fmt(value: float) -> str:
     if math.isfinite(value) and abs(value - round(value)) < 1e-12:
         return str(int(round(value)))
     return f"{value:.12g}"
+
+
+_ALLOWED_EXPR_NAMES = {
+    "pi": math.pi,
+    "e": math.e,
+}
+
+
+def _safe_numeric_expr(value: Any) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"Could not parse numeric value: {value!r}")
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value).replace(",", "").strip()
+    try:
+        return float(text)
+    except ValueError:
+        pass
+
+    # LLM sometimes emits area as "3.14159 * (0.6)^2".
+    expr = text.replace("^", "**")
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except SyntaxError as exc:
+        raise ValueError(f"Could not parse numeric value: {value!r}") from exc
+
+    def eval_node(node: ast.AST) -> float:
+        if isinstance(node, ast.Expression):
+            return eval_node(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.Name) and node.id in _ALLOWED_EXPR_NAMES:
+            return float(_ALLOWED_EXPR_NAMES[node.id])
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            v = eval_node(node.operand)
+            return v if isinstance(node.op, ast.UAdd) else -v
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow)):
+            a = eval_node(node.left)
+            b = eval_node(node.right)
+            if isinstance(node.op, ast.Add):
+                return a + b
+            if isinstance(node.op, ast.Sub):
+                return a - b
+            if isinstance(node.op, ast.Mult):
+                return a * b
+            if isinstance(node.op, ast.Div):
+                return a / b
+            if isinstance(node.op, ast.Pow):
+                return a ** b
+        raise ValueError(f"Could not parse numeric value: {value!r}")
+
+    return eval_node(tree)
 
 
 
@@ -214,13 +268,7 @@ def _to_si_quantity(quantity: Any, default_unit: str = "") -> float:
     if value is None:
         raise ValueError("Missing numeric value")
 
-    # schemas t? notebook/dataset th??ng l?u number d??i d?ng string: "100", "3e5", "1.2e-5"
-    s = str(value).replace(",", "").strip()
-    try:
-        numeric = float(s)
-    except ValueError as exc:
-        raise ValueError(f"Could not parse numeric value: {value!r}") from exc
-
+    numeric = _safe_numeric_expr(value)
     return numeric * _unit_factor(unit)
 
 def _from_si(value_si: float, unit: str | None) -> float:
@@ -528,6 +576,53 @@ def _solve_parallel_plate_field(schema: dict[str, Any], formula: str) -> SolveRe
     result = _new_result()
     result.add_step("Formula selected", "Use parallel-plate field E = U/d.")
     result.answer = _answer(value, query, "electric_field", "V/m")
+    return result
+
+
+def _solve_capacitor_voltage_series(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "voltage")
+    if query is None:
+        return _fail("No voltage query object for series capacitor voltage division.", formula)
+
+    try:
+        rel = _first_formula_relation(schema)
+        id_map = {obj.get("id"): obj for obj in _objects(schema)}
+        rel_ids = [obj_id for obj_id in rel.get("objects", []) if obj_id in id_map]
+        rel_objs = [id_map[obj_id] for obj_id in rel_ids]
+
+        caps = [obj for obj in rel_objs if obj.get("type") == "capacitance" and obj.get("role") != "query"]
+        if len(caps) < 2:
+            caps = [obj for obj in _objects(schema) if obj.get("type") == "capacitance" and obj.get("role") != "query"]
+        if len(caps) < 2:
+            return _fail("Need two capacitances for series capacitor voltage division.", formula)
+
+        voltages = [obj for obj in rel_objs if obj.get("type") == "voltage" and obj.get("role") != "query"]
+        if not voltages:
+            voltages = [obj for obj in _objects(schema) if obj.get("type") == "voltage" and obj.get("role") != "query"]
+        if not voltages:
+            return _fail("Need total voltage for series capacitor voltage division.", formula)
+
+        c1 = _to_si_quantity(caps[0], "F")
+        c2 = _to_si_quantity(caps[1], "F")
+        u_total = _to_si_quantity(voltages[0], "V")
+        if c1 <= 0 or c2 <= 0:
+            return _fail("Capacitances must be positive.", formula)
+
+        qid = str(query.get("id", "")).lower()
+        # For two capacitors in series: U1 = U*C2/(C1+C2), U2 = U*C1/(C1+C2).
+        if "2" in qid and "1" not in qid.replace("u2", ""):
+            value = u_total * c1 / (c1 + c2)
+        elif "1" in qid:
+            value = u_total * c2 / (c1 + c2)
+        else:
+            # If the query id is generic, use the last capacitance mentioned in the relation.
+            value = u_total * c1 / (c1 + c2)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use series capacitor voltage division: U_i = Q/C_i with common Q.")
+    result.answer = _answer(value, query, "voltage", "V")
     return result
 
 
@@ -1758,6 +1853,8 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "capacitor_energy_charge_scaling_constant_capacitance": _solve_capacitor_energy_charge_scaling_constant_capacitance,
         "series_capacitance_unknown": _solve_series_capacitance_unknown,
         "capacitor_series_unknown": _solve_series_capacitance_unknown,
+        "capacitor_voltage_series": _solve_capacitor_voltage_series,
+        "series_capacitor_voltage_division": _solve_capacitor_voltage_series,
         "inductor_energy": _solve_inductor_energy,
         "lc_magnetic_energy_inductor": _solve_inductor_energy,
         "lc_resonance_frequency": _solve_lc_resonance_frequency,

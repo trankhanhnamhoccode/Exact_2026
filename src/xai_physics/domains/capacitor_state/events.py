@@ -91,10 +91,30 @@ class DistanceScale:
     def apply(self, state: CapacitorState) -> str:
         state.infer_missing()
 
-        if state.capacitance_F is None:
-            raise ValueError("Cannot scale plate distance because capacitance is unknown.")
-
         old_Q = state.charge_C
+        old_V = state.voltage_V
+
+        if state.capacitance_F is None:
+            # Relative-only benchmark rows often give voltage but not capacitance.
+            # For d -> factor*d, C -> C/factor. If disconnected, Q is conserved,
+            # so V -> factor*V. If connected, the source keeps V fixed.
+            if state.connected_to_source:
+                state.charge_C = None
+                return (
+                    f"Plate distance scaled by {self.factor:g}. "
+                    "Capacitance changes by an unknown absolute amount, but because the capacitor "
+                    "is connected to a source, voltage stays fixed."
+                )
+            if old_V is not None:
+                state.voltage_V = old_V * self.factor
+                state.charge_C = old_Q
+                return (
+                    f"Plate distance scaled by {self.factor:g}. "
+                    "Capacitance is unknown, but for a disconnected capacitor Q is conserved, "
+                    "so voltage scales in proportion to plate distance."
+                )
+            raise ValueError("Cannot scale plate distance because capacitance and voltage are unknown.")
+
         state.capacitance_F = state.capacitance_F / self.factor
 
         if state.connected_to_source:
@@ -123,10 +143,29 @@ class AreaScale:
     def apply(self, state: CapacitorState) -> str:
         state.infer_missing()
 
-        if state.capacitance_F is None:
-            raise ValueError("Cannot scale plate area because capacitance is unknown.")
-
         old_Q = state.charge_C
+        old_V = state.voltage_V
+
+        if state.capacitance_F is None:
+            # For A -> factor*A, C -> factor*C. If disconnected, Q is conserved,
+            # so V -> V/factor. If connected, the source keeps V fixed.
+            if state.connected_to_source:
+                state.charge_C = None
+                return (
+                    f"Plate area scaled by {self.factor:g}. "
+                    "Capacitance changes by an unknown absolute amount, but because the capacitor "
+                    "is connected to a source, voltage stays fixed."
+                )
+            if old_V is not None:
+                state.voltage_V = old_V / self.factor
+                state.charge_C = old_Q
+                return (
+                    f"Plate area scaled by {self.factor:g}. "
+                    "Capacitance is unknown, but for a disconnected capacitor Q is conserved, "
+                    "so voltage scales inversely with plate area."
+                )
+            raise ValueError("Cannot scale plate area because capacitance and voltage are unknown.")
+
         state.capacitance_F = state.capacitance_F * self.factor
 
         if state.connected_to_source:

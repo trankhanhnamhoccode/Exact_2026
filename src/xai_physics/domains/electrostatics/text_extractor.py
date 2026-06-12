@@ -18,7 +18,8 @@ _SUPERSCRIPT_TRANS = str.maketrans({
 })
 
 NUM = r"[-+]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:\s*(?:x|×|\*)\s*10\s*\^?\s*[-+]?\d+)?|10\s*\^?\s*[-+]?\d+)"
-UNIT = r"(?:N/C|V/m|μC|µC|uC|mC|nC|pC|C|cm|mm|m|N|degree|degrees|deg|°)"
+# Order matters under re.I: put cm before C, otherwise "16 cm" can be parsed as value=16, unit="c".
+UNIT = r"(?:N/C|V/m|cm|mm|μC|µC|uC|mC|nC|pC|C|m|N|degree|degrees|deg|°)"
 
 
 @dataclass(frozen=True)
@@ -338,9 +339,13 @@ def _extract_charges(text: str, points: set[str]) -> list[dict[str, Any]]:
     # Individual q_i = value unit.
     for m in re.finditer(rf"\b(q\d+|q0|q)\s*=\s*({NUM})\s*(μC|µC|uC|mC|nC|pC|C)\b", text, flags=re.I):
         cid = m.group(1)
-        # Do not let generic q overwrite q1/q2/q3 equal-charge pattern unless it is target q.
-        if cid == "q" and cid in charges:
-            continue
+        if cid == "q" and any(k in charges for k in ["q1", "q2", "q3"]):
+            # "Three identical charges q = ..." means q is the common symbol,
+            # not a fourth charge. Keep q only when the text explicitly introduces
+            # a separate/test charge q placed somewhere else.
+            around = text[max(0, m.start() - 40): m.end() + 80].lower()
+            if not re.search(r"(?:test\s+charge|charge)\s+q\s*=", around):
+                continue
         if cid not in charges:
             set_charge(cid, _parse_number(m.group(2)), _unit(m.group(3)))
 
@@ -353,6 +358,12 @@ def _extract_charges(text: str, points: set[str]) -> list[dict[str, Any]]:
             for cid in ["q1", "q2", "q3"]:
                 if cid not in charges:
                     set_charge(cid, val, unit)
+
+    if "q" in charges and any(k in charges for k in ["q1", "q2", "q3"]):
+        # In "three identical charges q = ...", q is a common symbol, not a
+        # fourth charge. Keep q only when introduced as a separate/test charge.
+        if not re.search(r"(?:test\s+charge|a\s+charge|charge)\s+q\s*=", text, flags=re.I):
+            del charges["q"]
 
     # Map charge locations.
     def assign(cid: str, point: str) -> None:
