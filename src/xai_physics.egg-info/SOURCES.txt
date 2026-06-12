@@ -1,0 +1,15 @@
+pyproject.toml
+src/xai_physics/__init__.py
+src/xai_physics.egg-info/PKG-INFO
+src/xai_physics.egg-info/SOURCES.txt
+src/xai_physics.egg-info/dependency_links.txt
+src/xai_physics.egg-info/requires.txt
+src/xai_physics.egg-info/top_level.txt
+src/xai_physics/core/__init__.py
+src/xai_physics/domains/__init__.py
+src/xai_physics/domains/capacitor_state/__init__.py
+src/xai_physics/domains/electrostatics/__init__.py
+src/xai_physics/domains/equations/__init__.py
+src/xai_physics/domains/geometry/__init__.py
+src/xai_physics/domains/state/__init__.py
+src/xai_physics/router/__init__.py
