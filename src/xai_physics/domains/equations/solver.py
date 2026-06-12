@@ -60,6 +60,9 @@ def _unit_factor(unit: str | None) -> float:
         "J/m?": 1.0,
         "V/m": 1.0,
         "N/C": 1.0,
+        "times": 1.0,
+        "x": 1.0,
+        "%": 1.0,
     }
     if normalized in aliases:
         return aliases[normalized]
@@ -438,6 +441,246 @@ def _solve_capacitor_energy_density(schema: dict[str, Any], formula: str) -> Sol
     return result
 
 
+
+def _id_symbol_text(obj: dict[str, Any]) -> str:
+    return " ".join(
+        str(obj.get(k, ""))
+        for k in ("id", "symbol", "type")
+    ).lower()
+
+
+def _objects_by_type(
+    schema: dict[str, Any],
+    obj_type: str | tuple[str, ...],
+    *,
+    role: str | None = None,
+) -> list[dict[str, Any]]:
+    types = (obj_type,) if isinstance(obj_type, str) else obj_type
+    out: list[dict[str, Any]] = []
+    seen: set[int] = set()
+
+    for source in (_all_relevant_objects(schema), _objects(schema)):
+        for obj in source:
+            if id(obj) in seen:
+                continue
+            if obj.get("type") not in types:
+                continue
+            if role is not None and obj.get("role") != role:
+                continue
+            out.append(obj)
+            seen.add(id(obj))
+
+    return out
+
+
+def _find_obj_by_alias(
+    schema: dict[str, Any],
+    aliases: tuple[str, ...],
+    *,
+    obj_type: str | tuple[str, ...] | None = None,
+    role: str | None = None,
+) -> dict[str, Any] | None:
+    if obj_type is None:
+        candidates = _all_relevant_objects(schema) + _objects(schema)
+    else:
+        candidates = _objects_by_type(schema, obj_type, role=role)
+
+    aliases_l = tuple(a.lower() for a in aliases)
+
+    for obj in candidates:
+        if role is not None and obj.get("role") != role:
+            continue
+        blob = _id_symbol_text(obj)
+        if any(a in blob for a in aliases_l):
+            return obj
+
+    return None
+
+
+def _dimensionless_value(obj: dict[str, Any]) -> float:
+    unit = _raw_unit(obj, "times")
+    if normalize_unit(unit) == "%":
+        return _to_si_quantity(obj, "%") / 100.0
+    return _to_si_quantity(obj, "times")
+
+
+def _answer_ratio(value: float, query: dict[str, Any] | None) -> str:
+    unit = "times"
+    if query is not None and query.get("unit") not in (None, ""):
+        unit = str(query["unit"])
+
+    if normalize_unit(unit) == "%":
+        return f"{_fmt(value * 100.0)} %"
+
+    return f"{_fmt(value)} times"
+
+
+def _capacitance_ratio(schema: dict[str, Any]) -> float:
+    ratio_obj = _find_obj_by_alias(
+        schema,
+        ("c_ratio", "capacitance_ratio", "c2/c1", "cf/ci", "c_final/c_initial"),
+        obj_type="ratio",
+        role="given",
+    )
+    if ratio_obj is not None:
+        return _dimensionless_value(ratio_obj)
+
+    final_obj = _find_obj_by_alias(
+        schema,
+        ("c_final", "cf", "final_capacitance"),
+        obj_type="capacitance",
+        role="given",
+    )
+    initial_obj = _find_obj_by_alias(
+        schema,
+        ("c_initial", "ci", "initial_capacitance"),
+        obj_type="capacitance",
+        role="given",
+    )
+
+    if final_obj is not None and initial_obj is not None:
+        return _to_si_quantity(final_obj, "F") / _to_si_quantity(initial_obj, "F")
+
+    # fallback: n?u schema c? ??ng 2 capacitance given, hi?u object th? 2 l? final.
+    caps = _objects_by_type(schema, "capacitance", role="given")
+    if len(caps) >= 2:
+        return _to_si_quantity(caps[1], "F") / _to_si_quantity(caps[0], "F")
+
+    raise ValueError("Missing capacitance ratio or initial/final capacitance.")
+
+
+def _voltage_ratio(schema: dict[str, Any]) -> float:
+    ratio_obj = _find_obj_by_alias(
+        schema,
+        ("v_ratio", "u_ratio", "voltage_ratio", "v2/v1", "u2/u1"),
+        obj_type="ratio",
+        role="given",
+    )
+    if ratio_obj is not None:
+        return _dimensionless_value(ratio_obj)
+
+    volts = _objects_by_type(schema, "voltage", role="given")
+    if len(volts) >= 2:
+        return _to_si_quantity(volts[1], "V") / _to_si_quantity(volts[0], "V")
+
+    raise ValueError("Missing voltage ratio or two voltage values.")
+
+
+def _charge_ratio(schema: dict[str, Any]) -> float:
+    ratio_obj = _find_obj_by_alias(
+        schema,
+        ("q_ratio", "charge_ratio", "q2/q1"),
+        obj_type="ratio",
+        role="given",
+    )
+    if ratio_obj is not None:
+        return _dimensionless_value(ratio_obj)
+
+    charges = _objects_by_type(schema, "charge", role="given")
+    if len(charges) >= 2:
+        return _to_si_quantity(charges[1], "C") / _to_si_quantity(charges[0], "C")
+
+    raise ValueError("Missing charge ratio or two charge values.")
+
+
+def _solve_capacitor_energy_scaling_constant_voltage(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        ratio = _capacitance_ratio(schema)
+        query = _query_obj(schema, "ratio") or _query_obj(schema)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step(
+        "Formula selected",
+        "At constant voltage, W = 1/2*C*U^2, so energy scales proportional to capacitance.",
+    )
+    result.answer = _answer_ratio(ratio, query)
+    return result
+
+
+def _solve_capacitor_energy_voltage_scaling_constant_capacitance(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        v_ratio = _voltage_ratio(schema)
+        w_ratio = v_ratio * v_ratio
+        query = _query_obj(schema, "ratio") or _query_obj(schema)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step(
+        "Formula selected",
+        "At constant capacitance, W = 1/2*C*U^2, so W2/W1 = (U2/U1)^2.",
+    )
+    result.answer = _answer_ratio(w_ratio, query)
+    return result
+
+
+def _solve_capacitor_energy_charge_scaling_constant_capacitance(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        q_ratio = _charge_ratio(schema)
+        w_ratio = q_ratio * q_ratio
+        query = _query_obj(schema, "ratio") or _query_obj(schema)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step(
+        "Formula selected",
+        "At constant capacitance, W = Q^2/(2C), so W2/W1 = (Q2/Q1)^2.",
+    )
+    result.answer = _answer_ratio(w_ratio, query)
+    return result
+
+
+def _solve_series_capacitance_unknown(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        ceq_obj = _find_obj_by_alias(
+            schema,
+            ("ceq", "c_eq", "equivalent", "total"),
+            obj_type="capacitance",
+        )
+        if ceq_obj is None:
+            raise ValueError("Missing equivalent capacitance Ceq.")
+
+        known_caps = [
+            obj
+            for obj in _objects_by_type(schema, "capacitance")
+            if obj.get("role") in {"given", "constant"}
+            and obj is not ceq_obj
+            and "equivalent" not in _id_symbol_text(obj)
+            and "ceq" not in _id_symbol_text(obj)
+            and "c_eq" not in _id_symbol_text(obj)
+        ]
+
+        if not known_caps:
+            raise ValueError("Missing known series capacitance.")
+
+        c_known_obj = known_caps[0]
+        query = _query_obj(schema, "capacitance")
+
+        ceq = _to_si_quantity(ceq_obj, "F")
+        c_known = _to_si_quantity(c_known_obj, "F")
+
+        if ceq <= 0 or c_known <= 0:
+            raise ValueError("Capacitances must be positive.")
+
+        denominator = (1.0 / ceq) - (1.0 / c_known)
+        if denominator <= 0:
+            raise ValueError("Invalid series setup: need Ceq < known capacitor for positive unknown capacitance.")
+
+        c_unknown = 1.0 / denominator
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step(
+        "Formula selected",
+        "For two capacitors in series, 1/Ceq = 1/C1 + 1/C2.",
+    )
+    result.answer = _answer(c_unknown, query, "capacitance", _raw_unit(c_known_obj, "F"))
+    return result
+
 def solve_schema(schema: dict[str, Any]) -> SolveResult:
     formula = _formula_id(schema)
 
@@ -449,6 +692,13 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "parallel_plate_charge_from_field": _solve_parallel_plate_charge_from_field,
         "parallel_plate_field": _solve_parallel_plate_field,
         "capacitor_energy_density": _solve_capacitor_energy_density,
+        "capacitor_energy_scaling_constant_voltage": _solve_capacitor_energy_scaling_constant_voltage,
+        "energy_scaling_constant_voltage": _solve_capacitor_energy_scaling_constant_voltage,
+        "capacitor_energy_constant_voltage_scaling": _solve_capacitor_energy_scaling_constant_voltage,
+        "capacitor_energy_voltage_scaling_constant_capacitance": _solve_capacitor_energy_voltage_scaling_constant_capacitance,
+        "capacitor_energy_charge_scaling_constant_capacitance": _solve_capacitor_energy_charge_scaling_constant_capacitance,
+        "series_capacitance_unknown": _solve_series_capacitance_unknown,
+        "capacitor_series_unknown": _solve_series_capacitance_unknown,
     }
 
     handler = handlers.get(formula)
