@@ -33,6 +33,7 @@ def _fmt(value: float) -> str:
 
 
 
+
 def _unit_factor(unit: str | None) -> float:
     if unit is None:
         return 1.0
@@ -60,7 +61,7 @@ def _unit_factor(unit: str | None) -> float:
         "nF": 1e-9,
         "pF": 1e-12,
 
-        # charge
+        # charge / line charge density
         "C": 1.0,
         "mC": 1e-3,
         "uC": 1e-6,
@@ -69,6 +70,13 @@ def _unit_factor(unit: str | None) -> float:
         "?C": 1e-6,
         "nC": 1e-9,
         "pC": 1e-12,
+        "C/m": 1.0,
+        "mC/m": 1e-3,
+        "uC/m": 1e-6,
+        "?C/m": 1e-6,
+        "?C/m": 1e-6,
+        "?C/m": 1e-6,
+        "nC/m": 1e-9,
 
         # voltage/current/resistance/power/energy/frequency/time
         "V": 1.0,
@@ -95,6 +103,19 @@ def _unit_factor(unit: str | None) -> float:
         "s": 1.0,
         "ms": 1e-3,
 
+        # mass / force / acceleration
+        "kg": 1.0,
+        "g": 1e-3,
+        "N": 1.0,
+        "mN": 1e-3,
+        "uN": 1e-6,
+        "?N": 1e-6,
+        "?N": 1e-6,
+        "?N": 1e-6,
+        "m/s2": 1.0,
+        "m/s^2": 1.0,
+        "m/s?": 1.0,
+
         # inductance / magnetism
         "H": 1.0,
         "mH": 1e-3,
@@ -115,6 +136,7 @@ def _unit_factor(unit: str | None) -> float:
         "m": 1.0,
         "cm": 1e-2,
         "mm": 1e-3,
+        "km": 1e3,
         "m2": 1.0,
         "m^2": 1.0,
         "m?": 1.0,
@@ -134,6 +156,7 @@ def _unit_factor(unit: str | None) -> float:
         "J/m^3": 1.0,
         "J/m?": 1.0,
         "V/m": 1.0,
+        "kV/m": 1e3,
         "N/C": 1.0,
     }
     if normalized in aliases:
@@ -1316,6 +1339,171 @@ def _solve_magnetic_energy_density(schema: dict[str, Any], formula: str) -> Solv
     result.answer = _answer(value, query, "energy_density", "J/m3")
     return result
 
+
+K_COULOMB = 8.9875517923e9
+G_DEFAULT = 10.0
+
+
+def _required_scalar(schema: dict[str, Any], obj_type: str | tuple[str, ...], unit: str = "") -> float:
+    obj = _given_obj(schema, obj_type)
+    if obj is None:
+        raise ValueError(f"Missing given object of type {obj_type}")
+    return _to_si_quantity(obj, unit)
+
+
+def _solve_point_charge_electric_field(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "electric_field")
+    if query is None:
+        return _fail("Only electric field query is supported for E = k|q|/(eps_r*r^2).", formula)
+
+    try:
+        q = _required_si(schema, "charge", "C")
+        r = _required_si(schema, ("distance", "length", "radius"), "m")
+        eps_r = _relative_permittivity(schema)
+        if r == 0 or eps_r == 0:
+            return _fail("Distance and relative permittivity must be non-zero.", formula)
+        value = K_COULOMB * abs(q) / (eps_r * r * r)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use point-charge electric field E = k|q|/(eps_r*r^2).")
+    result.answer = _answer(value, query, "electric_field", "V/m")
+    return result
+
+
+def _solve_electric_force_field(schema: dict[str, Any], formula: str) -> SolveResult:
+    f_query = _query_obj(schema, "force")
+    q_query = _query_obj(schema, "charge")
+    e_query = _query_obj(schema, "electric_field")
+
+    try:
+        if f_query is not None:
+            q = _required_si(schema, "charge", "C")
+            e = _required_si(schema, "electric_field", "V/m")
+            value = abs(q) * e
+            query = f_query
+            quantity_type = "force"
+            default_unit = "N"
+        elif q_query is not None:
+            f = _required_si(schema, "force", "N")
+            e = _required_si(schema, "electric_field", "V/m")
+            if e == 0:
+                return _fail("Electric field must be non-zero when solving charge.", formula)
+            value = abs(f) / e
+            query = q_query
+            quantity_type = "charge"
+            default_unit = "C"
+        elif e_query is not None:
+            f = _required_si(schema, "force", "N")
+            q = _required_si(schema, "charge", "C")
+            if q == 0:
+                return _fail("Charge must be non-zero when solving electric field.", formula)
+            value = abs(f) / abs(q)
+            query = e_query
+            quantity_type = "electric_field"
+            default_unit = "V/m"
+        else:
+            return _fail("No supported query object for F = |q|E.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use electric force relation F = |q|E.")
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
+def _solve_equilibrium_electric_field(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "electric_field")
+    if query is None:
+        return _fail("Only electric field query is supported for |q|E = mg.", formula)
+
+    try:
+        mass = _required_si(schema, "mass", "kg")
+        charge = _required_si(schema, "charge", "C")
+
+        g_obj = _given_obj(schema, ("acceleration", "gravitational_acceleration"))
+        g = _to_si_quantity(g_obj, "m/s2") if g_obj is not None else G_DEFAULT
+
+        if charge == 0:
+            return _fail("Charge must be non-zero.", formula)
+
+        value = mass * g / abs(charge)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "For vertical electric equilibrium, balance |q|E = mg.")
+    result.answer = _answer(value, query, "electric_field", "V/m")
+    return result
+
+
+def _solve_infinite_wire_electric_field(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "electric_field")
+    if query is None:
+        return _fail("Only electric field query is supported for E = 2k|lambda|/(eps_r*r).", formula)
+
+    try:
+        line_charge = _required_si(schema, "line_charge_density", "C/m")
+        r = _required_si(schema, ("distance", "length", "radius"), "m")
+        eps_r = _relative_permittivity(schema)
+        if r == 0 or eps_r == 0:
+            return _fail("Distance and relative permittivity must be non-zero.", formula)
+
+        value = 2.0 * K_COULOMB * abs(line_charge) / (eps_r * r)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use infinite-wire electric field E = 2k|lambda|/(eps_r*r).")
+    result.answer = _answer(value, query, "electric_field", "V/m")
+    return result
+
+
+def _solve_percentage_relative_error(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("percent_error", "relative_error", "ratio")) or _query_obj(schema)
+    if query is None:
+        return _fail("No query object for percentage relative error.", formula)
+
+    try:
+        abs_error = _required_scalar(schema, "absolute_error")
+        measured = _required_scalar(schema, "measured_value")
+        if measured == 0:
+            return _fail("Measured value must be non-zero.", formula)
+        percent = abs(abs_error) / abs(measured) * 100.0
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use percentage relative error = absolute error / measured value * 100%.")
+    result.answer = f"{_fmt(percent)} %"
+    return result
+
+
+def _solve_absolute_error_from_actual(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "absolute_error")
+    if query is None:
+        return _fail("Only absolute error query is supported for |actual - measured|.", formula)
+
+    try:
+        actual_obj = _given_obj(schema, "actual_value")
+        measured_obj = _given_obj(schema, "measured_value")
+        if actual_obj is None or measured_obj is None:
+            raise ValueError("Missing actual_value and/or measured_value.")
+
+        unit = _raw_unit(query, _raw_unit(actual_obj, _raw_unit(measured_obj, "")))
+        actual = _to_si_quantity(actual_obj, unit)
+        measured = _to_si_quantity(measured_obj, unit)
+        value = abs(actual - measured)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use absolute error = |actual value - measured value|.")
+    result.answer = _answer(value, query, "absolute_error", _raw_unit(query, ""))
+    return result
+
 def solve_schema(schema: dict[str, Any]) -> SolveResult:
     formula = _formula_id(schema)
 
@@ -1354,6 +1542,12 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "solenoid_inductance": _solve_solenoid_inductance,
         "magnetic_flux_total": _solve_magnetic_flux_total,
         "magnetic_energy_density": _solve_magnetic_energy_density,
+        "point_charge_electric_field": _solve_point_charge_electric_field,
+        "electric_force_field": _solve_electric_force_field,
+        "equilibrium_electric_field": _solve_equilibrium_electric_field,
+        "infinite_wire_electric_field": _solve_infinite_wire_electric_field,
+        "percentage_relative_error": _solve_percentage_relative_error,
+        "absolute_error_from_actual": _solve_absolute_error_from_actual,
     }
 
     handler = handlers.get(formula)
