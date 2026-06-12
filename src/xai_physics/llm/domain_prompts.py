@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 
 CAPACITOR_STATE_PROMPT = r"""
@@ -199,6 +199,7 @@ Allowed query types:
 - charge
 - capacitance
 - energy
+- energy_ratio
 
 Query target:
 - Use a capacitor id such as "C1" for single-capacitor questions.
@@ -222,6 +223,22 @@ Examples of query shape:
 FINAL INSTRUCTIONS
 ============================================================
 
+
+Energy ratio query:
+
+Use this query when the problem asks "how many times", "how will the energy change",
+"what multiple of initial energy", or similar comparison questions.
+
+{
+  "type": "energy_ratio",
+  "target": "C1",
+  "unit": "times"
+}
+
+Rules:
+- Use energy_ratio only when the question asks for a ratio/change factor, not an absolute energy value.
+- For disconnected parallel-plate capacitors, charge remains constant.
+- If plate distance is scaled while charge remains constant, represent that as a DistanceScale event.
 Return only the schema JSON.
 Do not solve.
 Do not include final answer.
@@ -319,4 +336,5 @@ DOMAIN_PROMPTS = {
     "capacitor_state": CAPACITOR_STATE_PROMPT,
     "electrostatics": ELECTROSTATICS_PROMPT,
 }
+
 

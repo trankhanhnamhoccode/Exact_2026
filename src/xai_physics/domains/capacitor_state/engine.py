@@ -133,7 +133,32 @@ def _format_value(value_si: float, si_unit: str, output_unit: Optional[str]) -> 
     return f"{value:g} {output_unit}"
 
 
-def _answer_query(query: dict[str, Any], system: SystemState) -> str:
+def _answer_query(query: dict[str, Any], system: SystemState, initial_system: SystemState | None = None) -> str:
+    if query.get("type") == "energy_ratio":
+        if initial_system is None:
+            raise ValueError("energy_ratio query requires initial_system snapshot.")
+
+        target = query.get("target", "system")
+
+        if target == "system":
+            initial_energy = sum(
+                cap.energy_J()
+                for cap in initial_system.capacitors.values()
+            )
+            final_energy = sum(
+                cap.energy_J()
+                for cap in system.capacitors.values()
+            )
+        else:
+            initial_energy = initial_system.get(target).energy_J()
+            final_energy = system.get(target).energy_J()
+
+        if initial_energy == 0:
+            raise ValueError("Cannot compute energy_ratio because initial energy is zero.")
+
+        ratio = final_energy / initial_energy
+        return f"{ratio:g} times"
+
     system.infer_all()
 
     qtype = query.get("type", "voltage")
@@ -224,6 +249,7 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         validate_schema(schema)
         system = _build_system(schema)
 
+        initial_system = system.clone()
         result.add_step(
             "Build system",
             "Built capacitor system from canonical schema.",
@@ -260,7 +286,7 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         if not queries:
             raise ValueError("Schema has no query.")
 
-        answer = _answer_query(queries[0], system)
+        answer = _answer_query(queries[0], system, initial_system=initial_system)
         result.answer = answer
         result.add_step(
             "Final answer",

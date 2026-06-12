@@ -25,6 +25,7 @@ SUPPORTED_QUERIES = {
     "charge",
     "capacitance",
     "energy",
+    "energy_ratio",
 }
 
 
