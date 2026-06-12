@@ -16,6 +16,7 @@ SUPPORTED_EVENTS = {
     "DistanceScale",
     "AreaScale",
     "ParallelRedistribution",
+    "ShortCircuit",
 }
 
 SUPPORTED_QUERIES = {
@@ -133,7 +134,7 @@ def _validate_event(event: dict[str, Any], index: int, entity_ids: set[str]) -> 
         if polarity != "same":
             _err(
                 f"{path}.params.polarity={polarity!r} is not supported yet. "
-                "Only 'same' is currently supported."
+                "Only same-polarity connection is currently supported."
             )
 
     if event_type == "ConnectToSource":
@@ -196,3 +197,9 @@ def validate_schema(schema: dict[str, Any]) -> None:
 
     for i, query in enumerate(queries):
         _validate_query(query, i, entity_ids)
+
+
+
+
+
+

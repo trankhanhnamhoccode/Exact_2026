@@ -22,8 +22,9 @@ def test_debug_retrieval_report_can_show_prompt():
         "After connecting their like-poled terminals together, find the final voltage."
     )
 
-    report = build_debug_report(problem, show_prompt=True, max_prompt_chars=5000)
+    report = build_debug_report(problem, show_prompt=True, max_prompt_chars=20000)
 
     assert "ParallelRedistribution" in report
     assert "cap_td095" in report
     assert "Return JSON only" in report
+

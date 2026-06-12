@@ -12,6 +12,7 @@ from xai_physics.domains.capacitor_state.events import (
     DisconnectFromSource,
     DistanceScale,
     InsertDielectric,
+    ShortCircuit,
 )
 from xai_physics.domains.capacitor_state.redistribution import ParallelRedistribution
 from xai_physics.domains.capacitor_state.contract import validate_schema
@@ -94,6 +95,9 @@ def _apply_single_cap_event(event_schema: dict[str, Any], system: SystemState) -
         if factor is None:
             raise ValueError("AreaScale requires factor.")
         return AreaScale(factor=float(factor)).apply(cap)
+
+    if event_type == "ShortCircuit":
+        return ShortCircuit().apply(cap)
 
     raise ValueError(f"Unsupported single-capacitor event: {event_type}")
 
@@ -251,3 +255,4 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         result.status = "solve_failed"
         result.error = str(exc)
         return result
+

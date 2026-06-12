@@ -62,17 +62,26 @@ def _find_first_voltage_V(text: str) -> Optional[float]:
 
 
 def _detect_query(text: str) -> str:
-    lower = text.lower()
+    import re
 
-    if "charge" in lower:
-        return "charge"
-    if "energy" in lower:
+    t = text.lower()
+
+    # Explicit query words must win.
+    if re.search(r"\b(final\s+voltage|voltage|potential difference)\b", t):
+        return "voltage"
+
+    if re.search(r"\b(final\s+energy|stored energy|energy)\b", t):
         return "energy"
-    if "capacitance" in lower:
+
+    # Important: use word boundary so "charged" does NOT match "charge".
+    if re.search(r"\b(total charge|final charge|charge)\b", t):
+        return "charge"
+
+    if re.search(r"\b(capacitance|capacity)\b", t):
         return "capacitance"
 
+    # For parallel redistribution problems, final voltage is the common default.
     return "voltage"
-
 
 def try_extract_parallel_problem(question: str) -> Optional[ParallelProblem]:
     text = question.strip()
@@ -125,3 +134,4 @@ def try_extract_parallel_problem(question: str) -> Optional[ParallelProblem]:
         events=[ParallelRedistribution(capacitor_ids=["C1", "C2"])],
         query=_detect_query(text),
     )
+

@@ -145,3 +145,22 @@ class AreaScale:
             f"Plate area scaled by {self.factor:g}. "
             "Since the capacitor is disconnected, charge is conserved."
         )
+
+
+class ShortCircuit:
+    """
+    Short-circuit a capacitor.
+
+    Physical meaning:
+    - The two plates are directly connected by a conducting path.
+    - Final voltage becomes zero.
+    - Final stored charge becomes zero.
+    - Final electric field energy becomes zero.
+    - Capacitance itself is unchanged.
+    """
+
+    def apply(self, cap):
+        cap.voltage_V = 0.0
+        cap.charge_C = 0.0
+        cap.connected_to_source = False
+        return cap
