@@ -1,4 +1,4 @@
-from xai_physics.domains.capacitor_state.retrieval.pending_store import (
+﻿from xai_physics.domains.capacitor_state.retrieval.pending_store import (
     load_pending_examples,
     filter_pending_by_tag,
     filter_pending_by_feature,
@@ -8,7 +8,7 @@ from xai_physics.domains.capacitor_state.retrieval.pending_store import (
 def test_pending_examples_load():
     examples = load_pending_examples()
 
-    assert len(examples) >= 5
+    assert len(examples) >= 4
     assert all(ex.domain == "capacitor_state" for ex in examples)
     assert all(ex.status == "pending" for ex in examples)
 
@@ -39,5 +39,11 @@ def test_lc_oscillation_is_no_longer_pending():
 
 def test_replace_dielectric_is_no_longer_pending():
     examples = filter_pending_by_tag("replace_dielectric")
+
+    assert examples == []
+
+
+def test_energy_percent_is_no_longer_pending():
+    examples = filter_pending_by_tag("energy_percent_query")
 
     assert examples == []

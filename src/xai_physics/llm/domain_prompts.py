@@ -264,6 +264,24 @@ Use this when the problem asks for the ratio of final capacitance to initial cap
   "unit": "times"
 }
 
+
+
+Energy percent query:
+
+Use this when the problem asks what percentage of initial energy remains,
+or asks for energy change expressed as a percentage.
+
+{
+  "type": "energy_percent",
+  "target": "C1",
+  "unit": "%"
+}
+
+Rules:
+- Use energy_percent only for percentage questions.
+- Use energy_ratio for "how many times" questions.
+- For disconnected capacitors, charge remains constant.
+
 Return only the schema JSON.
 Do not solve.
 Do not include final answer.

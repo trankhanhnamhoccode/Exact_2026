@@ -28,6 +28,7 @@ SUPPORTED_QUERIES = {
     "energy",
     "energy_ratio",
     "capacitance_ratio",
+    "energy_percent",
 }
 
 

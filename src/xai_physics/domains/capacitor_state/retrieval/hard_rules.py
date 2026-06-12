@@ -199,4 +199,22 @@ def apply_hard_rules(problem: str) -> list[TagHit]:
             evidence="ratio query",
         )
 
+
+    if (
+        ("percent" in text or "percentage" in text or "%" in text)
+        and ("energy" in text or "stored energy" in text or "electric field energy" in text)
+    ):
+        add(
+            tag="energy_percent_query",
+            source="hard_rule",
+            score=0.95,
+            evidence="energy percentage query",
+        )
+        add(
+            tag="ratio_query",
+            source="hard_rule",
+            score=0.90,
+            evidence="percentage is a ratio query",
+        )
+
     return hits

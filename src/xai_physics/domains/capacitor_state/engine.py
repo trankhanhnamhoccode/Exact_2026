@@ -144,6 +144,31 @@ def _format_value(value_si: float, si_unit: str, output_unit: Optional[str]) -> 
 
 
 def _answer_query(query: dict[str, Any], system: SystemState, initial_system: SystemState | None = None) -> str:
+    if query.get("type") == "energy_percent":
+        if initial_system is None:
+            raise ValueError("energy_percent query requires initial_system snapshot.")
+
+        target = query.get("target", "system")
+
+        if target == "system":
+            initial_energy = sum(
+                cap.energy_J()
+                for cap in initial_system.capacitors.values()
+            )
+            final_energy = sum(
+                cap.energy_J()
+                for cap in system.capacitors.values()
+            )
+        else:
+            initial_energy = initial_system.get(target).energy_J()
+            final_energy = system.get(target).energy_J()
+
+        if initial_energy == 0:
+            raise ValueError("Cannot compute energy_percent because initial energy is zero.")
+
+        percent = 100.0 * final_energy / initial_energy
+        return f"{percent:g} %"
+
     if query.get("type") == "capacitance_ratio":
         if initial_system is None:
             raise ValueError("capacitance_ratio query requires initial_system snapshot.")
