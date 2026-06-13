@@ -31,9 +31,9 @@ def detect_tags(problem: str) -> list[TagHit]:
         ("magnetic_field", 1.2, r"magnetic field|\bB\s*="),
         ("point_charge", 1.4, r"point charge"),
         ("electric_field", 1.2, r"electric field|\bE\s*="),
-        ("measurement_error", 1.5, r"relative error|percentage error|absolute error|least count|average absolute error"),
-        ("least_count", 1.3, r"least count"),
-        ("repeated_measurements", 1.2, r"average value|average absolute error|mean value|repeated measurements"),
+        ("measurement_error", 1.5, r"relative error|percentage error|percent relative|absolute error|least count|uncertainty|average absolute error|random error|maximum possible"),
+        ("least_count", 1.3, r"least count|smallest division"),
+        ("repeated_measurements", 1.2, r"average value|average absolute error|mean value|mean absolute error|repeated measurements|measurements were taken|readings"),
         ("force", 1.2, r"attractive force|force between|force on"),
         ("time_domain", 1.2, r"instantaneous|at time|cos|sin|omega|angular frequency"),
     ]
@@ -103,8 +103,20 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
     if "electric field" in text and "point charge" in text:
         add("point_charge_electric_field", 5.0)
 
-    if "relative error" in text or "percentage error" in text:
-        add("percentage_relative_error", 5.0)
+    if "relative error" in text or "percentage error" in text or "percentage relative" in text or "percent relative" in text:
+        add("percentage_relative_error", 5.5)
+
+    if "maximum possible" in text or "maximum value" in text:
+        add("measurement_maximum", 6.0)
+
+    if "random error" in text:
+        add("random_error_half_range", 6.0)
+
+    if ("r = u/i" in text or "r=u/i" in text or "resistance r is calculated" in text) and ("±" in text or "+/-" in text or "uncertainty" in text):
+        add("resistance_uncertainty_quotient", 6.0)
+
+    if ("power" in text or "p = ui" in text or "p=ui" in text) and ("voltage" in text or "u" in text) and ("current" in text or "i" in text) and ("±" in text or "+/-" in text or "uncertainty" in text or "relative error" in text):
+        add("power_uncertainty_product", 6.0)
 
     if ("instantaneous current" in text or "current at time" in text) and ("cos" in text or "omega" in text or "angular frequency" in text):
         add("harmonic_current_cos_time", 5.0)

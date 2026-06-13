@@ -1716,49 +1716,259 @@ def _solve_infinite_wire_electric_field(schema: dict[str, Any], formula: str) ->
     return result
 
 
+
+def _measurement_uncertainty_obj(schema: dict[str, Any], quantity_prefixes: tuple[str, ...] = ()) -> dict[str, Any] | None:
+    """Return an absolute uncertainty object.
+
+    The LLM uses many names for the same idea: absolute_error, uncertainty,
+    voltage_uncertainty, dU, delta_U, current_error, least_count, etc.  This
+    helper keeps the deterministic solver tolerant without guessing values.
+    """
+    wanted_types = {
+        "absolute_error",
+        "absolute_uncertainty",
+        "uncertainty",
+        "measurement_uncertainty",
+        "measurement_error",
+        "error",
+    }
+    if quantity_prefixes:
+        for prefix in quantity_prefixes:
+            wanted_types.add(f"{prefix}_error")
+            wanted_types.add(f"{prefix}_uncertainty")
+            wanted_types.add(f"delta_{prefix}")
+
+    prefix_tokens = tuple(p.lower() for p in quantity_prefixes)
+    candidates = [
+        obj for obj in _iter_unique_objects(schema)
+        if obj.get("role") in {"given", "constant"}
+        and _has_value(obj)
+        and str(obj.get("type", "")) in wanted_types | {"least_count"}
+    ]
+
+    if quantity_prefixes:
+        for obj in candidates:
+            blob = _id_symbol_text(obj)
+            if any(tok in blob for tok in prefix_tokens):
+                return obj
+
+        # Common symbols emitted by LLMs.
+        symbol_aliases = {
+            "voltage": ("du", "delta u", "delta_u", "u_error", "voltage"),
+            "current": ("di", "delta i", "delta_i", "i_error", "current"),
+            "resistance": ("dr", "delta r", "delta_r", "r_error", "resistance"),
+            "power": ("dp", "delta p", "delta_p", "p_error", "power"),
+        }
+        aliases = []
+        for prefix in quantity_prefixes:
+            aliases.extend(symbol_aliases.get(prefix, ()))
+        for obj in candidates:
+            blob = _id_symbol_text(obj)
+            if any(alias in blob for alias in aliases):
+                return obj
+
+    # Least count is an absolute uncertainty if no more specific object exists.
+    for obj in candidates:
+        if obj.get("type") == "least_count":
+            return obj
+    return candidates[0] if candidates else None
+
+
+def _measurement_value_obj(schema: dict[str, Any], obj_type: str) -> dict[str, Any] | None:
+    obj = _given_obj(schema, obj_type)
+    if obj is not None:
+        return obj
+    # LLM often uses measured_value for a generic measured length/current/etc.
+    if obj_type == "measured_value":
+        return _given_obj(schema, ("length", "mass", "voltage", "current", "temperature", "volume", "resistance", "time", "force"))
+    return None
+
+
 def _solve_percentage_relative_error(schema: dict[str, Any], formula: str) -> SolveResult:
-    query = _query_obj(schema, ("percent_error", "relative_error", "ratio")) or _query_obj(schema)
+    query = _query_obj(schema, ("percent_error", "percentage_relative_error", "relative_error", "ratio")) or _query_obj(schema)
     if query is None:
         return _fail("No query object for percentage relative error.", formula)
 
     try:
-        abs_error = _required_scalar(schema, "absolute_error")
-        measured = _required_scalar(schema, "measured_value")
+        measured_obj = _measurement_value_obj(schema, "measured_value")
+        if measured_obj is None:
+            # Prefer the first non-error measured quantity.
+            for t in ("length", "voltage", "current", "mass", "temperature", "volume", "resistance", "time", "force"):
+                measured_obj = _given_obj(schema, t)
+                if measured_obj is not None:
+                    break
+        if measured_obj is None:
+            raise ValueError("Missing measured value.")
+
+        unit = _raw_unit(measured_obj, "")
+        measured = _to_si_quantity(measured_obj, unit)
         if measured == 0:
             return _fail("Measured value must be non-zero.", formula)
+
+        err_obj = _measurement_uncertainty_obj(schema)
+        if err_obj is None:
+            raise ValueError("Missing absolute error, uncertainty, or least count.")
+        abs_error = _to_si_quantity(err_obj, unit)
         percent = abs(abs_error) / abs(measured) * 100.0
     except Exception as exc:
         return _fail(str(exc), formula)
 
     result = _new_result()
-    result.add_step("Formula selected", "Use percentage relative error = absolute error / measured value * 100%.")
+    result.add_step("Formula selected", "Use percentage relative error = absolute uncertainty / measured value * 100%.")
     result.answer = f"{_fmt(percent)} %"
     return result
 
 
 def _solve_absolute_error_from_actual(schema: dict[str, Any], formula: str) -> SolveResult:
-    query = _query_obj(schema, "absolute_error")
-    if query is None:
-        return _fail("Only absolute error query is supported for |actual - measured|.", formula)
-
     try:
-        actual_obj = _given_obj(schema, "actual_value")
+        actual_obj = _given_obj(schema, "actual_value") or _given_obj(schema, "true_value")
         measured_obj = _given_obj(schema, "measured_value")
         if actual_obj is None or measured_obj is None:
             raise ValueError("Missing actual_value and/or measured_value.")
 
-        unit = _raw_unit(query, _raw_unit(actual_obj, _raw_unit(measured_obj, "")))
+        unit = _raw_unit(actual_obj, _raw_unit(measured_obj, ""))
         actual = _to_si_quantity(actual_obj, unit)
         measured = _to_si_quantity(measured_obj, unit)
-        value = abs(actual - measured)
+        abs_value = abs(actual - measured)
+
+        queries = [obj for obj in _iter_unique_objects(schema) if obj.get("role") == "query"]
+        if not queries:
+            queries = [_query_obj(schema, "absolute_error") or _query_obj(schema)]
+
+        answers: list[str] = []
+        for q in queries:
+            if q is None:
+                continue
+            qtype = str(q.get("type", ""))
+            if qtype in {"absolute_error", "absolute_uncertainty", "error"}:
+                answers.append(_answer(abs_value, q, "absolute_error", unit))
+            elif qtype in {"relative_error", "percent_error", "percentage_relative_error", "ratio"}:
+                denominator = abs(measured) if measured != 0 else abs(actual)
+                if denominator == 0:
+                    return _fail("Reference value must be non-zero for relative error.", formula)
+                answers.append(f"{_fmt(100.0 * abs_value / denominator)} %")
+        if not answers:
+            query = _query_obj(schema, "absolute_error") or _query_obj(schema)
+            answers = [_answer(abs_value, query, "absolute_error", unit)]
     except Exception as exc:
         return _fail(str(exc), formula)
 
     result = _new_result()
-    result.add_step("Formula selected", "Use absolute error = |actual value - measured value|.")
-    result.answer = _answer(value, query, "absolute_error", _raw_unit(query, ""))
+    result.add_step("Formula selected", "Use absolute error = |actual value - measured value| and relative error = absolute error / measured value.")
+    result.answer = "; ".join(answers)
     return result
 
+
+def _solve_random_error_half_range(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        values = [
+            obj for obj in _iter_unique_objects(schema)
+            if obj.get("role") in {"given", "constant"}
+            and _has_value(obj)
+            and (
+                obj.get("type") in {"measured_value", "actual_value", "length", "height", "mass", "voltage", "current", "temperature", "volume", "time", "resistance"}
+                or str(obj.get("type", "")).endswith("_measurement")
+            )
+        ]
+        if len(values) < 2:
+            return _fail("Need at least two measured values for random error.", formula)
+        unit = _raw_unit(values[0], "")
+        vals = [_to_si_quantity(obj, unit) for obj in values]
+        value = (max(vals) - min(vals)) / 2.0
+        query = _query_obj(schema, ("random_error", "absolute_error")) or _query_obj(schema)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use random error as half range: Delta = (max - min)/2.")
+    result.answer = _answer(value, query, "random_error", unit)
+    return result
+
+
+def _solve_measurement_maximum(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        measured_obj = _measurement_value_obj(schema, "measured_value")
+        if measured_obj is None:
+            raise ValueError("Missing measured value.")
+        unit = _raw_unit(measured_obj, "")
+        measured = _to_si_quantity(measured_obj, unit)
+        err_obj = _measurement_uncertainty_obj(schema)
+        if err_obj is None:
+            raise ValueError("Missing uncertainty or absolute error.")
+        uncertainty = _to_si_quantity(err_obj, unit)
+        query = _query_obj(schema, ("maximum_value", "measured_value")) or _query_obj(schema)
+        value = measured + abs(uncertainty)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Maximum possible measured value is measured value plus absolute uncertainty.")
+    result.answer = _answer(value, query, "maximum_value", unit)
+    return result
+
+
+def _uncertainty_for_quantity(schema: dict[str, Any], quantity: str, unit: str) -> float:
+    obj = _measurement_uncertainty_obj(schema, (quantity,))
+    if obj is None:
+        raise ValueError(f"Missing uncertainty for {quantity}.")
+    return abs(_to_si_quantity(obj, unit))
+
+
+def _solve_resistance_uncertainty_quotient(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        u_obj = _given_obj(schema, "voltage")
+        i_obj = _given_obj(schema, "current")
+        if u_obj is None or i_obj is None:
+            raise ValueError("Need voltage and current measurements.")
+        u = _to_si_quantity(u_obj, "V")
+        i = _to_si_quantity(i_obj, "A")
+        if u == 0 or i == 0:
+            return _fail("Voltage and current must be non-zero.", formula)
+        du = _uncertainty_for_quantity(schema, "voltage", "V")
+        di = _uncertainty_for_quantity(schema, "current", "A")
+        r = u / i
+        rel = du / abs(u) + di / abs(i)
+        delta_r = r * rel
+        query = _query_obj(schema, ("absolute_error", "resistance_error", "measurement_error", "uncertainty")) or _query_obj(schema)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "For R=U/I, relative uncertainty adds: DeltaR/R = DeltaU/U + DeltaI/I.")
+    result.answer = _answer(delta_r, query, "absolute_error", "ohm")
+    return result
+
+
+def _solve_power_uncertainty_product(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        u_obj = _given_obj(schema, "voltage")
+        i_obj = _given_obj(schema, "current")
+        if u_obj is None or i_obj is None:
+            raise ValueError("Need voltage and current measurements.")
+        u = _to_si_quantity(u_obj, "V")
+        i = _to_si_quantity(i_obj, "A")
+        if u == 0 or i == 0:
+            return _fail("Voltage and current must be non-zero.", formula)
+        du = _uncertainty_for_quantity(schema, "voltage", "V")
+        di = _uncertainty_for_quantity(schema, "current", "A")
+        p = u * i
+        rel = du / abs(u) + di / abs(i)
+
+        query = _query_obj(schema, ("percent_error", "percentage_relative_error", "relative_error", "absolute_error", "measurement_error", "power_error", "uncertainty")) or _query_obj(schema)
+        qtype = str(query.get("type", "")) if isinstance(query, dict) else ""
+        if qtype in {"absolute_error", "power_error", "uncertainty", "absolute_uncertainty"}:
+            answer = _answer(p * rel, query, "absolute_error", "W")
+            detail = "For P=UI, DeltaP = P(DeltaU/U + DeltaI/I)."
+        else:
+            answer = f"{_fmt(rel * 100.0)} %"
+            detail = "For P=UI, relative uncertainty adds: DeltaP/P = DeltaU/U + DeltaI/I."
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", detail)
+    result.answer = answer
+    return result
 
 def _solve_capacitor_plate_force_by_charge_area(schema: dict[str, Any], formula: str) -> SolveResult:
     query = _query_obj(schema, "force")
@@ -2043,11 +2253,20 @@ def _solve_instrument_absolute_error(schema: dict[str, Any], formula: str) -> So
 
 def _solve_measurement_average(schema: dict[str, Any], formula: str) -> SolveResult:
     try:
+        excluded_measurement_types = {
+            "absolute_error", "average_absolute_error", "mean_absolute_error", "random_error",
+            "absolute_uncertainty", "measurement_uncertainty", "measurement_error", "uncertainty",
+            "least_count", "percent_error", "relative_error", "percentage_relative_error",
+        }
         values = [
             obj for obj in _iter_unique_objects(schema)
-            if obj.get("role") == "given"
-            and obj.get("type") in {"measured_value", "length", "mass", "voltage", "current", "temperature", "volume"}
+            if obj.get("role") in {"given", "constant"}
             and _has_value(obj)
+            and str(obj.get("type", "")) not in excluded_measurement_types
+            and (
+                obj.get("type") in {"measured_value", "actual_value", "length", "height", "mass", "voltage", "current", "temperature", "volume", "time", "resistance", "force"}
+                or str(obj.get("type", "")).endswith("_measurement")
+            )
         ]
         if not values:
             return _fail("Need measured values for average measurement.", formula)
@@ -2063,9 +2282,9 @@ def _solve_measurement_average(schema: dict[str, Any], formula: str) -> SolveRes
             if q is None:
                 continue
             qtype = q.get("type")
-            if qtype in {"average_value", "average_length", "mean_value", "mean"}:
+            if qtype in {"average_value", "average_length", "average_mass", "average_temperature", "average_voltage", "average_current", "mean_value", "mean"} or (qtype.startswith("average_") and "error" not in qtype):
                 answers.append(_answer(mean, q, qtype, unit))
-            elif qtype in {"average_absolute_error", "absolute_error"}:
+            elif qtype in {"average_absolute_error", "mean_absolute_error", "average_error", "absolute_error"}:
                 answers.append(_answer(avg_abs_err, q, qtype, unit))
             elif qtype in {"relative_error", "percent_error", "percentage_relative_error"}:
                 if mean == 0:
@@ -2225,9 +2444,27 @@ def _compatible_formula_names_from_objects(schema: dict[str, Any]) -> list[str]:
         add("power_current_resistance")
 
     # Measurement / error.
-    if "least_count" in types and _has_query_type(schema, "absolute_error"):
-        add("instrument_absolute_error")
-    if _count_given(schema, ("measured_value", "length", "mass", "voltage", "current", "temperature", "volume")) >= 2:
+    measurement_types = {
+        "absolute_error", "absolute_uncertainty", "uncertainty", "measurement_uncertainty", "least_count",
+        "actual_value", "true_value", "measured_value", "voltage_error", "current_error", "measurement_error",
+        "voltage_uncertainty", "current_uncertainty", "random_error", "maximum_value",
+    }
+    if types & measurement_types or _has_query_type(schema, ("percent_error", "percentage_relative_error", "relative_error", "absolute_error")):
+        if "least_count" in types and _has_query_type(schema, "absolute_error"):
+            add("instrument_absolute_error")
+        if _has_query_type(schema, ("percent_error", "percentage_relative_error", "relative_error")):
+            add("percentage_relative_error")
+        if {"actual_value", "true_value"} & types and "measured_value" in types:
+            add("absolute_error_from_actual")
+        if _has_query_type(schema, ("maximum_value",)):
+            add("measurement_maximum")
+        if has_u and has_i and _has_query_type(schema, ("absolute_error", "resistance_error")):
+            add("resistance_uncertainty_quotient")
+        if has_u and has_i and (has_p or _has_query_type(schema, ("percent_error", "percentage_relative_error", "relative_error", "power_error", "absolute_error"))):
+            add("power_uncertainty_product")
+    if _count_given(schema, ("measured_value", "actual_value", "length", "height", "mass", "voltage", "current", "temperature", "volume")) >= 2:
+        if _has_query_type(schema, ("random_error",)):
+            add("random_error_half_range")
         add("measurement_average")
 
     # Solenoid / magnetic formulas.
@@ -2339,9 +2576,20 @@ def _canonical_formula(schema: dict[str, Any], formula: str) -> str:
         "power_from_voltage_current": "power_voltage_current",
         "percent_relative_uncertainty": "percentage_relative_error",
         "relative_uncertainty": "percentage_relative_error",
-        "random_error": "measurement_average",
+        "random_error": "random_error_half_range",
+        "random_error_half_range": "random_error_half_range",
+        "half_range_random_error": "random_error_half_range",
         "average_value": "measurement_average",
         "average_absolute_error": "measurement_average",
+        "measurement_maximum": "measurement_maximum",
+        "maximum_possible_value": "measurement_maximum",
+        "max_possible_value": "measurement_maximum",
+        "resistance_uncertainty": "resistance_uncertainty_quotient",
+        "resistance_uncertainty_quotient": "resistance_uncertainty_quotient",
+        "resistance_error_from_voltage_current": "resistance_uncertainty_quotient",
+        "power_uncertainty": "power_uncertainty_product",
+        "power_uncertainty_product": "power_uncertainty_product",
+        "power_error_from_voltage_current": "power_uncertainty_product",
         "parallel_resistance": "parallel_resistance",
         "not_relevant": "capacitor_plate_force_by_charge_area",
         "turn_density": "solenoid_turn_density",
@@ -2381,9 +2629,11 @@ def _canonical_formula(schema: dict[str, Any], formula: str) -> str:
         if key in {"capacitor_charge_voltage", "capacitor_energy_voltage", "capacitor_energy_charge_voltage"}:
             return "capacitor_energy_charge_voltage"
 
-    # If any relation explicitly asks for average measurement, use the aggregate handler.
+    # If any relation explicitly asks for aggregate measurement, use the right aggregate handler.
     names = {str(rel.get("name", "")).lower() for rel in _relations(schema)}
-    if {"average_value", "average_absolute_error", "random_error"} & names:
+    if {"random_error", "random_error_half_range", "half_range_random_error"} & names:
+        return "random_error_half_range"
+    if {"average_value", "average_absolute_error", "measurement_average"} & names:
         return "measurement_average"
 
     return key
@@ -2429,6 +2679,10 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "parallel_resistance": _solve_parallel_resistance,
         "instrument_absolute_error": _solve_instrument_absolute_error,
         "measurement_average": _solve_measurement_average,
+        "random_error_half_range": _solve_random_error_half_range,
+        "measurement_maximum": _solve_measurement_maximum,
+        "resistance_uncertainty_quotient": _solve_resistance_uncertainty_quotient,
+        "power_uncertainty_product": _solve_power_uncertainty_product,
         "solenoid_turn_density": _solve_solenoid_turn_density,
         "solenoid_magnetic_field": _solve_solenoid_magnetic_field,
         "solenoid_magnetic_field_from_n": _solve_solenoid_magnetic_field,
