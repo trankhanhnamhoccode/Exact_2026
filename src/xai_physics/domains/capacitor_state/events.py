@@ -186,6 +186,42 @@ class AreaScale:
         )
 
 
+@dataclass
+class CapacitanceScale:
+    factor: float
+    hold_policy: str = "auto"
+    name: str = "capacitance_scale"
+
+    def apply(self, state: CapacitorState) -> str:
+        state.infer_missing()
+
+        old_Q = state.charge_C
+        old_V = state.voltage_V
+
+        if state.capacitance_F is None:
+            raise ValueError("Cannot scale capacitance because capacitance is unknown.")
+
+        state.capacitance_F = state.capacitance_F * self.factor
+        policy = (self.hold_policy or "auto").lower()
+
+        if policy in {"voltage", "constant_voltage"} or state.connected_to_source:
+            state.voltage_V = old_V
+            state.charge_C = None
+            state.infer_missing()
+            return (
+                f"Capacitance scaled by {self.factor:g}. "
+                "Voltage is kept constant, so charge and stored energy scale with capacitance."
+            )
+
+        state.charge_C = old_Q
+        state.voltage_V = None
+        state.infer_missing()
+        return (
+            f"Capacitance scaled by {self.factor:g}. "
+            "The capacitor is isolated, so charge is conserved."
+        )
+
+
 class ShortCircuit:
     """
     Short-circuit a capacitor.
