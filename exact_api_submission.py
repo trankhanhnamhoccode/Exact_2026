@@ -6,19 +6,19 @@ Purpose:
 - Return EXACT schema: a JSON list with one result object
 - Reuse your current physics pipeline:
       from xai_physics.llm.schema_pipeline import solve_problem_with_llm
-- Use an OpenAI-compatible vLLM server as the LLM backend.
+- Use a local Ollama server as the LLM backend.
 
 Expected local services:
 - This API: http://localhost:8000/predict
-- vLLM OpenAI server: http://localhost:8001/v1
+- Ollama server: http://localhost:11434
 
 Run:
     python exact_api_submission.py
 
 Environment variables you may set:
     EXACT_API_PORT=8000
-    VLLM_BASE_URL=http://localhost:8001/v1
-    VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct
+    OLLAMA_BASE_URL=http://localhost:11434
+    OLLAMA_MODEL=qwen2.5:7b-instruct
     EXACT_K=2
     REQUIRE_API_KEY=0
     EXACT_API_KEY=xai-demo-key-123
@@ -76,11 +76,12 @@ API_PORT = int(os.getenv("EXACT_API_PORT", "8000"))
 REQUIRE_API_KEY = os.getenv("REQUIRE_API_KEY", "0") == "1"
 EXACT_API_KEY = os.getenv("EXACT_API_KEY", "xai-demo-key-123")
 
-VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://localhost:8001/v1").rstrip("/")
-VLLM_MODEL = os.getenv("VLLM_MODEL", "Qwen/Qwen2.5-7B-Instruct")
-VLLM_TIMEOUT = int(os.getenv("VLLM_TIMEOUT", "55"))
-VLLM_MAX_TOKENS = int(os.getenv("VLLM_MAX_TOKENS", "512"))
-VLLM_TEMPERATURE = float(os.getenv("VLLM_TEMPERATURE", "0.0"))
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct")
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "55"))
+OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "4096"))
+OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "512"))
+OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.0"))
 
 EXACT_K = int(os.getenv("EXACT_K", "2"))
 ENABLE_TYPE1_LLM_FALLBACK = os.getenv("ENABLE_TYPE1_LLM_FALLBACK", "0") == "1"
@@ -106,81 +107,59 @@ class PredictRequest(BaseModel):
 
 
 # -----------------------------------------------------------------------------
-# OpenAI-compatible vLLM client matching your old .generate(prompt) interface
+# Ollama client matching your old .generate(prompt) interface
 # -----------------------------------------------------------------------------
 
-class VLLMNotebookClient:
+class OllamaNotebookClient:
     """
-    Drop-in replacement for your old OllamaNotebookClient.
+    Drop-in client for your existing pipeline.
 
     Your existing pipeline expects:
         client.generate(prompt: str) -> str
 
-    This calls vLLM's OpenAI-compatible endpoint.
-    It tries /v1/completions first, then falls back to /v1/chat/completions.
+    This calls Ollama's native /api/generate endpoint with format=json,
+    matching the notebook code you used for CSV evaluation.
     """
 
     def __init__(
         self,
         model: str,
-        base_url: str = VLLM_BASE_URL,
-        temperature: float = VLLM_TEMPERATURE,
-        max_tokens: int = VLLM_MAX_TOKENS,
-        timeout: int = VLLM_TIMEOUT,
+        base_url: str = OLLAMA_BASE_URL,
+        temperature: float = OLLAMA_TEMPERATURE,
+        num_ctx: int = OLLAMA_NUM_CTX,
+        num_predict: int = OLLAMA_NUM_PREDICT,
+        timeout: int = OLLAMA_TIMEOUT,
     ):
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.temperature = temperature
-        self.max_tokens = max_tokens
+        self.num_ctx = num_ctx
+        self.num_predict = num_predict
         self.timeout = timeout
 
     def generate(self, prompt: str) -> str:
-        completion_payload = {
+        payload = {
             "model": self.model,
             "prompt": prompt,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
-        }
-
-        try:
-            r = requests.post(
-                f"{self.base_url}/completions",
-                json=completion_payload,
-                timeout=self.timeout,
-            )
-            if r.status_code != 404:
-                r.raise_for_status()
-                data = r.json()
-                return data.get("choices", [{}])[0].get("text", "")
-        except requests.HTTPError:
-            raise
-        except Exception:
-            # Continue to chat fallback.
-            pass
-
-        chat_payload = {
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "Return only valid JSON when the user prompt asks for JSON.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
+            "stream": False,
+            "format": "json",
+            "options": {
+                "temperature": self.temperature,
+                "num_ctx": self.num_ctx,
+                "num_predict": self.num_predict,
+            },
         }
         r = requests.post(
-            f"{self.base_url}/chat/completions",
-            json=chat_payload,
+            f"{self.base_url}/api/generate",
+            json=payload,
             timeout=self.timeout,
         )
         r.raise_for_status()
         data = r.json()
-        return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        return data.get("response", "")
 
 
-LLM_CLIENT = VLLMNotebookClient(model=VLLM_MODEL)
+LLM_CLIENT = OllamaNotebookClient(model=OLLAMA_MODEL)
 
 
 # -----------------------------------------------------------------------------
@@ -594,8 +573,8 @@ def root():
     return {
         "name": "EXACT 2026 Submission API",
         "prediction_endpoint": "/predict",
-        "vllm_base_url": VLLM_BASE_URL,
-        "vllm_model": VLLM_MODEL,
+        "ollama_base_url": OLLAMA_BASE_URL,
+        "ollama_model": OLLAMA_MODEL,
     }
 
 
@@ -605,8 +584,8 @@ def health():
         "status": "ok" if solve_problem_with_llm is not None else "error",
         "physics_pipeline_imported": solve_problem_with_llm is not None,
         "physics_import_error": PHYSICS_IMPORT_ERROR,
-        "vllm_base_url": VLLM_BASE_URL,
-        "vllm_model": VLLM_MODEL,
+        "ollama_base_url": OLLAMA_BASE_URL,
+        "ollama_model": OLLAMA_MODEL,
         "type1_mode": "llm_fallback" if ENABLE_TYPE1_LLM_FALLBACK else "schema_fallback",
         "uptime_sec": round(time.time() - START_TIME, 2),
     }
@@ -622,13 +601,18 @@ def status():
     }
 
 
-@app.get("/vllm_models_proxy")
-def vllm_models_proxy():
-    """
-    Convenience check only. For the official urls.txt, prefer exposing the real
-    vLLM /v1/models URL through its own tunnel.
-    """
-    r = requests.get(f"{VLLM_BASE_URL}/models", timeout=10)
+@app.get("/ollama_tags_proxy")
+def ollama_tags_proxy():
+    """Convenience check only. For urls.txt, expose the real Ollama URL through its own tunnel."""
+    r = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+
+@app.get("/ollama_v1_models_proxy")
+def ollama_v1_models_proxy():
+    """Convenience check for Ollama's OpenAI-compatible /v1/models endpoint."""
+    r = requests.get(f"{OLLAMA_BASE_URL}/v1/models", timeout=10)
     r.raise_for_status()
     return r.json()
 
