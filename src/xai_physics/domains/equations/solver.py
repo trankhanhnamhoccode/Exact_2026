@@ -1642,6 +1642,33 @@ def _solve_frequency_scaling_for_resonance(schema: dict[str, Any], formula: str)
 MU0 = 4 * math.pi * 1e-7
 
 
+def _solenoid_b_from_available(schema: dict[str, Any]) -> float | None:
+    """Return B = mu0*n*I when enough solenoid data is present, else None."""
+    current_obj = _given_obj(schema, "current")
+    if current_obj is None:
+        return None
+
+    try:
+        current = _to_si_quantity(current_obj, "A")
+        n_density_obj = _given_obj(schema, "turn_density")
+        if n_density_obj is not None:
+            n_density = _to_si_quantity(n_density_obj, "turns/m")
+            return MU0 * n_density * current
+
+        n_turns_obj = _given_obj(schema, "turn_count")
+        length_obj = _given_obj(schema, ("length", "distance"))
+        if n_turns_obj is not None and length_obj is not None:
+            n_turns = _to_si_quantity(n_turns_obj, "turns")
+            length = _to_si_quantity(length_obj, "m")
+            if length == 0:
+                return None
+            return MU0 * (n_turns / length) * current
+    except Exception:
+        return None
+
+    return None
+
+
 def _solve_solenoid_turn_density(schema: dict[str, Any], formula: str) -> SolveResult:
     n_query = _query_obj(schema, "turn_density")
     n_turns_query = _query_obj(schema, "turn_count")
@@ -1750,24 +1777,63 @@ def _solve_solenoid_inductance(schema: dict[str, Any], formula: str) -> SolveRes
     return result
 
 
-def _solve_magnetic_flux_total(schema: dict[str, Any], formula: str) -> SolveResult:
+def _magnetic_field_for_flux_or_density(schema: dict[str, Any]) -> float:
+    b_obj = _given_obj(schema, "magnetic_field")
+    if b_obj is not None:
+        return _to_si_quantity(b_obj, "T")
+
+    b_from_solenoid = _solenoid_b_from_available(schema)
+    if b_from_solenoid is not None:
+        return b_from_solenoid
+
+    raise ValueError("Missing magnetic field B, or solenoid turn-density/current data to compute B.")
+
+
+def _solve_magnetic_flux(schema: dict[str, Any], formula: str) -> SolveResult:
     query = _query_obj(schema, "magnetic_flux")
     if query is None:
-        return _fail("Only magnetic flux query is supported for Phi = N*B*A.", formula)
+        return _fail("Only magnetic flux query is supported for Phi = B*A.", formula)
 
     try:
-        n_obj = _given_obj(schema, "turn_count")
-        n_turns = _to_si_quantity(n_obj, "turns") if n_obj is not None else 1.0
-        b = _required_si(schema, "magnetic_field", "T")
+        b = _magnetic_field_for_flux_or_density(schema)
         area = _area_si(schema)
-        value = n_turns * b * area
+        value = b * area
     except Exception as exc:
         return _fail(str(exc), formula)
 
     result = _new_result()
-    result.add_step("Formula selected", "Use total flux linkage Phi = N*B*A.")
+    result.add_step("Formula selected", "Use magnetic flux through one turn/cross-section Phi = B*A.")
     result.answer = _answer(value, query, "magnetic_flux", "Wb")
     return result
+
+
+def _solve_magnetic_flux_linkage(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("magnetic_flux_linkage", "flux_linkage")) or _query_obj(schema, "magnetic_flux")
+    if query is None:
+        return _fail("Only flux linkage query is supported for lambda = N*Phi.", formula)
+
+    try:
+        n_turns = _required_si(schema, "turn_count", "turns")
+        phi_obj = _given_obj(schema, "magnetic_flux")
+        if phi_obj is not None:
+            phi = _to_si_quantity(phi_obj, "Wb")
+        else:
+            b = _magnetic_field_for_flux_or_density(schema)
+            area = _area_si(schema)
+            phi = b * area
+        value = n_turns * phi
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use total flux linkage lambda = N*Phi = N*B*A.")
+    result.answer = _answer(value, query, "magnetic_flux", "Wb")
+    return result
+
+
+def _solve_magnetic_flux_total(schema: dict[str, Any], formula: str) -> SolveResult:
+    # Backward-compatible alias: historically this meant flux linkage.
+    return _solve_magnetic_flux_linkage(schema, formula)
 
 
 def _solve_magnetic_energy_density(schema: dict[str, Any], formula: str) -> SolveResult:
@@ -1776,7 +1842,7 @@ def _solve_magnetic_energy_density(schema: dict[str, Any], formula: str) -> Solv
         return _fail("Only energy density query is supported for u = B^2/(2*mu0).", formula)
 
     try:
-        b = _required_si(schema, "magnetic_field", "T")
+        b = _magnetic_field_for_flux_or_density(schema)
         value = b * b / (2.0 * MU0)
     except Exception as exc:
         return _fail(str(exc), formula)
@@ -2675,12 +2741,19 @@ def _compatible_formula_names_from_objects(schema: dict[str, Any]) -> list[str]:
         add("measurement_average")
 
     # Solenoid / magnetic formulas.
+    has_solenoid_source = "turn_density" in types or ("turn_count" in types and ("length" in types or "distance" in types))
     if "turn_count" in types or "turn_density" in types:
         add("solenoid_turn_density")
-        if "magnetic_field" in types and "current" in types:
+        if "current" in types and (_has_query_type(schema, "magnetic_field") or "magnetic_field" in types):
             add("solenoid_magnetic_field")
-        if "area" in types:
+        if "area" in types and ("length" in types or "distance" in types):
             add("solenoid_inductance")
+    if _has_query_type(schema, "energy_density") and ("magnetic_field" in types or (has_solenoid_source and "current" in types)):
+        add("magnetic_energy_density")
+    if _has_query_type(schema, "magnetic_flux") and "area" in types and ("magnetic_field" in types or (has_solenoid_source and "current" in types)):
+        add("magnetic_flux")
+    if _has_query_type(schema, ("magnetic_flux_linkage", "flux_linkage")) or ("turn_count" in types and _has_query_type(schema, "magnetic_flux") and "magnetic_flux" in types):
+        add("magnetic_flux_linkage")
 
     return names
 
@@ -2912,6 +2985,11 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "solenoid_magnetic_field": _solve_solenoid_magnetic_field,
         "solenoid_magnetic_field_from_n": _solve_solenoid_magnetic_field,
         "solenoid_inductance": _solve_solenoid_inductance,
+        "magnetic_flux": _solve_magnetic_flux,
+        "magnetic_flux_one_turn": _solve_magnetic_flux,
+        "magnetic_flux_cross_section": _solve_magnetic_flux,
+        "magnetic_flux_linkage": _solve_magnetic_flux_linkage,
+        "total_flux_linkage": _solve_magnetic_flux_linkage,
         "magnetic_flux_total": _solve_magnetic_flux_total,
         "magnetic_energy_density": _solve_magnetic_energy_density,
         "point_charge_electric_field": _solve_point_charge_electric_field,

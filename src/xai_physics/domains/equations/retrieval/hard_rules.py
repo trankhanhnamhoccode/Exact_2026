@@ -28,7 +28,7 @@ def detect_tags(problem: str) -> list[TagHit]:
         ("current", 1.0, r"\bcurrent|\bI\s*="),
         ("rlc", 1.2, r"\bRLC\b|quality factor|Q factor"),
         ("solenoid", 1.8, r"\bsolenoid\b"),
-        ("magnetic_field", 1.2, r"magnetic field|\bB\s*="),
+        ("magnetic_field", 1.2, r"magnetic field|magnetic flux density|\bB\s*="),
         ("point_charge", 1.4, r"point charge"),
         ("electric_field", 1.2, r"electric field|\bE\s*="),
         ("measurement_error", 1.5, r"relative error|percentage error|percent relative|absolute error|least count|uncertainty|average absolute error|random error|maximum possible"),
@@ -36,6 +36,8 @@ def detect_tags(problem: str) -> list[TagHit]:
         ("repeated_measurements", 1.2, r"average value|average absolute error|mean value|mean absolute error|repeated measurements|measurements were taken|readings"),
         ("force", 1.2, r"attractive force|force between|force on"),
         ("time_domain", 1.2, r"instantaneous|at time|cos|sin|omega|angular frequency"),
+        ("magnetic_flux", 1.3, r"magnetic flux|flux linkage|flux through"),
+        ("turn_density", 1.3, r"turn density|turns per meter|turns/m|number of turns per meter"),
     ]
 
     for tag, score, pattern in patterns:
@@ -97,8 +99,17 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
     if ("ohm" in text or "resistance" in text or "resistor" in text) and ("current" in text or "voltage" in text):
         add("ohm_law", 4.5)
 
-    if "solenoid" in text and "magnetic field" in text:
+    if "solenoid" in text and ("magnetic field" in text or "magnetic flux density" in text or re.search(r"\bb\s*=", text)):
         add("solenoid_magnetic_field", 5.0)
+
+    if "solenoid" in text and ("turn density" in text or "turns per meter" in text or "turns/m" in text or "number of turns per meter" in text):
+        add("solenoid_turn_density", 6.0)
+
+    if "solenoid" in text and "inductance" in text and ("area" in text or "cross-sectional" in text or "cross sectional" in text):
+        add("solenoid_inductance", 6.0)
+
+    if "solenoid" in text and ("magnetic field" in text or "magnetic flux density" in text) and ("turn density" in text or "turns/m" in text or "turns per meter" in text) and "current" in text:
+        add("solenoid_magnetic_field", 6.0)
 
     if "electric field" in text and "point charge" in text:
         add("point_charge_electric_field", 5.0)
@@ -182,8 +193,15 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
     if "power" in text and "voltage" in text and ("resistance" in text or "resistor" in text):
         add("power_voltage_resistance", 5.0)
 
-    if "magnetic flux" in text or "flux linkage" in text:
-        add("magnetic_flux_total", 5.0)
+    if "flux linkage" in text or "total magnetic flux" in text:
+        add("magnetic_flux_linkage", 7.0)
+    elif ("magnetic flux" in text or "flux through" in text) and "coil" in text and "turn" in text and not any(p in text for p in ["one turn", "each turn", "per turn", "cross-section", "cross section"]):
+        add("magnetic_flux_total", 7.0)
+    elif "magnetic flux" in text or "flux through" in text:
+        add("magnetic_flux", 6.5)
+
+    if "magnetic energy density" in text or "magnetic field energy density" in text or ("energy density" in text and "solenoid" in text):
+        add("magnetic_energy_density", 6.5)
 
     if "absolute error" in text and ("actual" in text or "measured" in text):
         add("absolute_error_from_actual", 5.0)
