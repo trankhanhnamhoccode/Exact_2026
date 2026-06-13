@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from xai_physics.hybrid.formula_filler import Quantity, fill_formula_specs
+
 NUM = r"[-+]?(?:(?:\d+(?:\.\d+)?|\.\d+)(?:\s*(?:×|x|\*)\s*10\s*(?:\^|\*\*)?\s*[-+]?\d+|[eE][-+]?\d+)?|10\s*(?:\^|\*\*)\s*[-+]?\d+|10\s*[-+]\s*\d+)"
 
 
@@ -289,6 +291,40 @@ def _parallel_plate_geometry_objects(text: str) -> list[dict[str, Any]] | None:
     return objects
 
 
+def _candidate_query_intent(low: str) -> str | None:
+    if _is_charge_query(low):
+        return "charge"
+    if _is_capacitance_query(low):
+        return "capacitance"
+    if _is_energy_query(low):
+        return "energy"
+    if _is_force_query(low):
+        return "force"
+    if _is_electric_field_query(low):
+        return "electric_field"
+    return None
+
+
+def _inventory_entry(item: tuple[float, str] | None) -> tuple[Quantity, ...]:
+    if item is None:
+        return ()
+    value, unit = item
+    return (Quantity(str(value), _unit(unit)),)
+
+
+def _quantity_inventory(text: str) -> dict[str, tuple[Quantity, ...]]:
+    inv: dict[str, tuple[Quantity, ...]] = {
+        "capacitance": _inventory_entry(_capacitance(text)),
+        "voltage": _inventory_entry(_voltage(text)),
+        "charge": _inventory_entry(_charge(text)),
+        "distance": _inventory_entry(_distance(text)),
+        "force": _inventory_entry(_force(text)),
+        "electric_field": _inventory_entry(_electric_field_given(text)),
+        "relative_permittivity": _inventory_entry(_relative_permittivity_value(text)),
+    }
+    return {key: values for key, values in inv.items() if values}
+
+
 def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
     """Generate high-precision equation schemas directly from text.
 
@@ -462,6 +498,8 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
             objects.append({"id": "g1", "type": "gravitational_acceleration", "role": "given", **_quantity(*g)})
         objects.append({"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"})
         candidates.append(_schema("equilibrium_electric_field", objects))
+
+    candidates.extend(fill_formula_specs(_quantity_inventory(text), _candidate_query_intent(low)))
 
     # Preserve order but deduplicate by a compact schema signature.
     out: list[dict[str, Any]] = []
