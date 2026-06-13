@@ -616,6 +616,157 @@ def _two_charge_geometry(text: str, low: str) -> tuple[tuple[float, float], tupl
     return None
 
 
+
+def _side_length_between(text: str, a: str, b: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>cm|mm|m)"
+    side = ''.join(sorted((a.upper(), b.upper())))
+    direct = re.search(rf"\b{side}\s*=\s*(?P<value>{NUM})\s*{unit}\b", text, flags=re.I)
+    if direct:
+        return _parse_number(direct.group("value")), _unit(direct.group("unit"))
+    spaced = re.search(rf"\b{a}\s*(?:-|to|and)\s*{b}\b[^.]*?\b(?P<value>{NUM})\s*{unit}\b", text, flags=re.I)
+    if spaced:
+        return _parse_number(spaced.group("value")), _unit(spaced.group("unit"))
+    return None
+
+
+def _labeled_charge(text: str, label: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>pC|nC|uC|mC|C|coulombs?)"
+    label = label.upper()
+    patterns = [
+        rf"\bq\s*{label}\s*=\s*(?P<value>{NUM})\s*{unit}\b",
+        rf"\bq{label}\s*=\s*(?P<value>{NUM})\s*{unit}\b",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, flags=re.I)
+        if m:
+            return _parse_number(m.group("value")), _unit(m.group("unit"))
+    return None
+
+
+def _target_point_from_force_query(text: str, low: str) -> str | None:
+    for label in ("A", "B", "C", "M", "O"):
+        if re.search(rf"\b(?:force|acting)\b[^.]*\b(?:charge\s+)?(?:at\s+)?{label}\b", text, flags=re.I):
+            return label
+        if re.search(rf"\bon\s+q\s*{label}\b", text, flags=re.I):
+            return label
+    m = re.search(r"\bforce\s+(?:acting\s+)?on\s+(?:the\s+)?charge\s+at\s+(?P<label>[ABC])\b", text, flags=re.I)
+    if m:
+        return m.group("label").upper()
+    return None
+
+
+def _right_triangle_coordinates_from_text(text: str, low: str) -> dict[str, tuple[float, float]] | None:
+    if "right" not in low or "triangle" not in low:
+        return None
+    m = re.search(r"right[- ]angled\s+at\s+(?P<label>[ABC])", text, flags=re.I)
+    if not m:
+        m = re.search(r"right\s+angle\s+at\s+(?P<label>[ABC])", text, flags=re.I)
+    if not m:
+        return None
+    right = m.group("label").upper()
+    labels = ["A", "B", "C"]
+    others = [x for x in labels if x != right]
+    adj1 = ''.join(sorted((right, others[0])))
+    adj2 = ''.join(sorted((right, others[1])))
+    hyp = ''.join(sorted((others[0], others[1])))
+    lengths = {
+        "AB": _side_length_between(text, "A", "B"),
+        "AC": _side_length_between(text, "A", "C"),
+        "BC": _side_length_between(text, "B", "C"),
+    }
+    if lengths[hyp] is None:
+        if lengths[adj1] is None or lengths[adj2] is None:
+            return None
+        a = _length_to_m(lengths[adj1])
+        b = _length_to_m(lengths[adj2])
+    else:
+        h = _length_to_m(lengths[hyp])
+        if lengths[adj1] is not None:
+            a = _length_to_m(lengths[adj1])
+            b2 = h * h - a * a
+            if b2 < -1e-12:
+                return None
+            b = math.sqrt(max(0.0, b2))
+        elif lengths[adj2] is not None:
+            b = _length_to_m(lengths[adj2])
+            a2 = h * h - b * b
+            if a2 < -1e-12:
+                return None
+            a = math.sqrt(max(0.0, a2))
+        else:
+            return None
+    coords = {right: (0.0, 0.0), others[0]: (a, 0.0), others[1]: (0.0, b)}
+    return coords
+
+
+def _right_triangle_three_charge_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if not _is_force_query(low):
+        return None
+    coords = _right_triangle_coordinates_from_text(text, low)
+    if coords is None:
+        return None
+    charges = {label: _labeled_charge(text, label) for label in ("A", "B", "C")}
+    if any(value is None for value in charges.values()):
+        return None
+    target_label = _target_point_from_force_query(text, low)
+    if target_label not in coords:
+        return None
+    objects: list[dict[str, Any]] = []
+    for label in ("A", "B", "C"):
+        charge = charges[label]
+        x, y = coords[label]
+        if label == target_label:
+            objects.append(_point_obj("M", x, y))
+            objects.append({"id": "q_test", "type": "test_charge", "role": "given", **_quantity(*charge)})
+        else:
+            objects.append(_source_charge_obj(f"q{label}", charge, x, y))
+    objects.append({"id": "F_query", "type": "force", "role": "query", "value": None, "unit": "N"})
+    return _schema(
+        "two_charge_geometry_field",
+        objects,
+        constraints=["Reconstruct right-triangle coordinates from the stated right angle and side lengths before vector superposition."],
+    )
+
+
+def _equilateral_two_identical_remaining_vertex_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if not _is_force_query(low):
+        return None
+    if "equilateral triangle" not in low or "two identical charges" not in low or "remaining vertex" not in low:
+        return None
+    source = re.search(
+        rf"two\s+identical\s+charges\s+q\s*=\s*(?P<value>{NUM})\s*(?P<unit>pC|nC|uC|mC|C|coulombs?)",
+        text,
+        flags=re.I,
+    )
+    target = re.search(
+        rf"q\s*(?:['′`]|prime)\s*=\s*(?P<value>{NUM})\s*(?P<unit>pC|nC|uC|mC|C|coulombs?)",
+        text,
+        flags=re.I,
+    )
+    side = re.search(
+        rf"(?:side\s+length\s+(?:of\s+)?(?:a\s*=\s*)?|side\s+a\s*=\s*)(?P<value>{NUM})\s*(?P<unit>cm|mm|m)",
+        text,
+        flags=re.I,
+    )
+    if source is None or target is None or side is None:
+        return None
+    q_source = (_parse_number(source.group("value")), _unit(source.group("unit")))
+    q_target = (_parse_number(target.group("value")), _unit(target.group("unit")))
+    a = _length_to_m((_parse_number(side.group("value")), _unit(side.group("unit"))))
+    height = math.sqrt(3.0) * a / 2.0
+    objects = [
+        _source_charge_obj("q1", q_source, 0.0, 0.0),
+        _source_charge_obj("q2", q_source, a, 0.0),
+        _point_obj("M", a / 2.0, height),
+        {"id": "q_test", "type": "test_charge", "role": "given", **_quantity(*q_target)},
+        {"id": "F_query", "type": "force", "role": "query", "value": None, "unit": "N"},
+    ]
+    return _schema(
+        "two_charge_geometry_field",
+        objects,
+        constraints=["Model the two identical charges at two vertices and the primed charge at the remaining equilateral-triangle vertex."],
+    )
+
 def _two_charge_geometry_candidate(text: str, low: str) -> dict[str, Any] | None:
     if not (_is_electric_field_query(low) or _is_force_query(low)):
         return None
@@ -906,6 +1057,8 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
     for special in (
         _two_charge_zero_field_candidate(text, low),
         _zero_field_unknown_charges_candidate(text, low),
+        _right_triangle_three_charge_candidate(text, low),
+        _equilateral_two_identical_remaining_vertex_candidate(text, low),
         _two_charge_geometry_candidate(text, low),
         _two_field_vector_resultant_candidate(text, low),
         _point_charge_inverse_candidate(text, low),

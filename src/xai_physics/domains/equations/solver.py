@@ -2585,7 +2585,7 @@ def _solve_two_charge_geometry_field(schema: dict[str, Any], formula: str) -> So
 
         ex = 0.0
         ey = 0.0
-        for charge in charges[:2]:
+        for charge in charges:
             q = _to_si_quantity(charge, "C")
             cx = _coord_si(charge, "x")
             cy = _coord_si(charge, "y")
