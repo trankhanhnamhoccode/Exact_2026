@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from xai_physics.llm.replay_cache import ReplaySchemaLLM, load_replay_cache
+from xai_physics.eval.answer_mode_classifier import classify_expected_answer
 from xai_physics.llm.schema_pipeline import solve_problem_with_llm
 from xai_physics.symbolic import parse_symbolic_answer
 
@@ -81,6 +82,10 @@ class ReplayEvalResult:
     schema_source: str | None
     quality_flag: str | None = None
     quality_reason: str | None = None
+    answer_type: str | None = None
+    answer_meta: dict[str, Any] | None = None
+    expected_answer_type: str | None = None
+    expected_answer_type_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -300,6 +305,7 @@ def run_replay_benchmark(
     results: list[ReplayEvalResult] = []
     for row in rows:
         quality_flag = quality_flags.get(row.case_id)
+        expected_mode = classify_expected_answer(row.expected, row.expected_unit)
         if row.case_id not in cache:
             if skip_missing_cache:
                 continue
@@ -315,6 +321,8 @@ def run_replay_benchmark(
                     schema_source=None,
                     quality_flag=quality_flag.flag if quality_flag else None,
                     quality_reason=quality_flag.reason if quality_flag else None,
+                    expected_answer_type=expected_mode.answer_mode,
+                    expected_answer_type_reason=expected_mode.reason,
                 )
             )
             continue
@@ -328,6 +336,9 @@ def run_replay_benchmark(
                 data = getattr(step, "data", None)
                 if isinstance(data, dict) and "candidate_source" in data:
                     schema_source = str(data["candidate_source"])
+            answer_meta_obj = getattr(result, "answer_meta", None)
+            answer_meta = answer_meta_obj.as_dict() if hasattr(answer_meta_obj, "as_dict") else None
+            answer_type = answer_meta.get("answer_type") if isinstance(answer_meta, dict) else None
             correct = compare_answer(result.answer, row.expected, expected_unit=row.expected_unit)
             results.append(
                 ReplayEvalResult(
@@ -341,6 +352,10 @@ def run_replay_benchmark(
                     schema_source=schema_source,
                     quality_flag=quality_flag.flag if quality_flag else None,
                     quality_reason=quality_flag.reason if quality_flag else None,
+                    answer_type=str(answer_type) if answer_type is not None else None,
+                    answer_meta=answer_meta,
+                    expected_answer_type=expected_mode.answer_mode,
+                    expected_answer_type_reason=expected_mode.reason,
                 )
             )
         except Exception as exc:  # pragma: no cover - defensive CLI boundary
@@ -356,6 +371,8 @@ def run_replay_benchmark(
                     schema_source=None,
                     quality_flag=quality_flag.flag if quality_flag else None,
                     quality_reason=quality_flag.reason if quality_flag else None,
+                    expected_answer_type=expected_mode.answer_mode,
+                    expected_answer_type_reason=expected_mode.reason,
                 )
             )
 
@@ -371,9 +388,19 @@ def run_replay_benchmark(
     trusted_comparable = [r for r in comparable if not is_excluded(r)]
     trusted_correct = sum(1 for r in trusted_comparable if r.correct)
     quality_flag_counts: dict[str, int] = {}
+    answer_type_counts: dict[str, int] = {}
+    expected_answer_type_counts: dict[str, int] = {}
+    answer_type_mismatch_counts: dict[str, int] = {}
     for result in results:
         if result.quality_flag:
             quality_flag_counts[result.quality_flag] = quality_flag_counts.get(result.quality_flag, 0) + 1
+        if result.answer_type:
+            answer_type_counts[result.answer_type] = answer_type_counts.get(result.answer_type, 0) + 1
+        if result.expected_answer_type:
+            expected_answer_type_counts[result.expected_answer_type] = expected_answer_type_counts.get(result.expected_answer_type, 0) + 1
+        if result.answer_type and result.expected_answer_type and result.answer_type != result.expected_answer_type:
+            key = f"{result.expected_answer_type}->{result.answer_type}"
+            answer_type_mismatch_counts[key] = answer_type_mismatch_counts.get(key, 0) + 1
 
     return {
         "total": total,
@@ -382,6 +409,9 @@ def run_replay_benchmark(
         "correct": correct_count,
         "accuracy": correct_count / len(comparable) if comparable else 0.0,
         "quality_flag_counts": quality_flag_counts,
+        "answer_type_counts": answer_type_counts,
+        "expected_answer_type_counts": expected_answer_type_counts,
+        "answer_type_mismatch_counts": answer_type_mismatch_counts,
         "excluded_quality_flags": sorted(excluded_flag_names),
         "excluded_total": len(excluded_results),
         "trusted_comparable": len(trusted_comparable),
@@ -432,6 +462,13 @@ def main(argv: list[str] | None = None) -> None:
     print(f"replayed: {report['total']}")
     print(f"solved: {report['solved']}")
     print(f"correct: {report['correct']} / {report['comparable']} = {report['accuracy']:.2%}")
+    if report.get("answer_type_counts"):
+        print(f"answer types: {report['answer_type_counts']}")
+    if report.get("expected_answer_type_counts"):
+        print(f"expected answer types: {report['expected_answer_type_counts']}")
+    if report.get("answer_type_mismatch_counts"):
+        print(f"answer type mismatches: {report['answer_type_mismatch_counts']}")
+
     if report.get("excluded_total", 0):
         print(f"excluded quality-flagged: {report['excluded_total']}")
         print(

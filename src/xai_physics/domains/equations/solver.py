@@ -6,6 +6,7 @@ import math
 import re
 from typing import Any
 
+from xai_physics.core.answer import AnswerEnvelope
 from xai_physics.core.result import SolveResult
 from xai_physics.symbolic import DirectionalAnswer, SymbolicExpr, SymbolicRelation
 from xai_physics.core.units import UNIT_TO_SI, normalize_unit, to_si
@@ -433,20 +434,117 @@ def _area_si(schema: dict[str, Any]) -> float:
     raise ValueError("Missing area or radius")
 
 
+def _answer_unit(query: dict[str, Any] | None, default_unit: str) -> str | None:
+    unit: str | None = default_unit
+    if query is not None and query.get("unit") not in (None, ""):
+        unit = str(query["unit"])
+    return unit
+
+
 def _answer(
     value_si: float,
     query: dict[str, Any] | None,
     quantity_type: str,
     default_unit: str,
 ) -> str:
-    unit = default_unit
-    if query is not None and query.get("unit") not in (None, ""):
-        unit = str(query["unit"])
+    unit = _answer_unit(query, default_unit)
 
     if unit in ("", "-", None):
         return _fmt(value_si)
 
     return f"{_fmt(_from_si(value_si, unit))} {unit}"
+
+
+def _set_numeric_answer(
+    result: SolveResult,
+    value_si: float,
+    query: dict[str, Any] | None,
+    quantity_type: str,
+    default_unit: str,
+    *,
+    formula: str | None = None,
+    confidence: float | None = None,
+) -> None:
+    unit = _answer_unit(query, default_unit)
+    display = _answer(value_si, query, quantity_type, default_unit)
+    display_value = value_si if unit in ("", "-", None) else _from_si(value_si, str(unit))
+    result.set_answer(
+        display,
+        AnswerEnvelope.numeric(
+            display=display,
+            value_si=value_si,
+            display_value=display_value,
+            unit=unit,
+            quantity_type=quantity_type,
+            formula=formula,
+            confidence=confidence,
+        ),
+    )
+
+
+def _set_symbolic_expr_answer(
+    result: SolveResult,
+    expr: SymbolicExpr,
+    *,
+    unit: str | None = None,
+    variables: dict[str, str] | None = None,
+    formula: str | None = None,
+    confidence: float | None = None,
+) -> None:
+    display = expr.render()
+    result.set_answer(
+        display,
+        AnswerEnvelope.symbolic(
+            display=display,
+            canonical=("expr", expr.key()),
+            unit=unit,
+            variables=variables or {},
+            formula=formula,
+            confidence=confidence,
+        ),
+    )
+
+
+def _set_symbolic_relation_answer(
+    result: SolveResult,
+    relation: SymbolicRelation,
+    *,
+    unit: str | None = None,
+    formula: str | None = None,
+    confidence: float | None = None,
+) -> None:
+    display = relation.render()
+    result.set_answer(
+        display,
+        AnswerEnvelope.relation_answer(
+            display=display,
+            canonical=relation.key(),
+            relation={"left": relation.left, "right": relation.right.render()},
+            unit=unit,
+            formula=formula,
+            confidence=confidence,
+        ),
+    )
+
+
+def _set_direction_answer(
+    result: SolveResult,
+    direction: DirectionalAnswer,
+    *,
+    formula: str | None = None,
+    confidence: float | None = None,
+) -> None:
+    display = direction.render()
+    result.set_answer(
+        display,
+        AnswerEnvelope.direction_answer(
+            display=display,
+            canonical=direction.key(),
+            target=direction.target,
+            formula=formula,
+            confidence=confidence,
+        ),
+    )
 
 
 def _solve_capacitor_charge_voltage(schema: dict[str, Any], formula: str) -> SolveResult:
@@ -487,7 +585,7 @@ def _solve_capacitor_charge_voltage(schema: dict[str, Any], formula: str) -> Sol
 
     result = _new_result()
     result.add_step("Formula selected", "Use capacitor charge-voltage relation Q = C*U.")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -541,7 +639,7 @@ def _solve_capacitor_energy_voltage(schema: dict[str, Any], formula: str) -> Sol
 
     result = _new_result()
     result.add_step("Formula selected", "Use capacitor energy formula W = 1/2*C*U^2.")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -583,7 +681,7 @@ def _solve_capacitor_energy_charge_voltage(schema: dict[str, Any], formula: str)
 
     result = _new_result()
     result.add_step("Formula selected", "Use capacitor energy formula W = 1/2*Q*U.")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -633,7 +731,7 @@ def _solve_capacitor_energy_charge_capacitance(schema: dict[str, Any], formula: 
 
     result = _new_result()
     result.add_step("Formula selected", "Use capacitor energy formula W = Q^2/(2*C).")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -667,7 +765,7 @@ def _solve_parallel_plate_capacitance(schema: dict[str, Any], formula: str) -> S
 
     result = _new_result()
     result.add_step("Formula selected", "Use parallel-plate capacitance C = eps0*eps_r*A/d.")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -691,7 +789,7 @@ def _solve_parallel_plate_charge_from_voltage(schema: dict[str, Any], formula: s
 
     result = _new_result()
     result.add_step("Formula selected", "Use Q = eps0*eps_r*A*U/d.")
-    result.answer = _answer(value, query, "charge", "nC")
+    _set_numeric_answer(result, value, query, "charge", "nC")
     return result
 
 
@@ -710,7 +808,7 @@ def _solve_parallel_plate_charge_from_field(schema: dict[str, Any], formula: str
 
     result = _new_result()
     result.add_step("Formula selected", "Use Q = eps0*eps_r*A*E.")
-    result.answer = _answer(value, query, "charge", "uC")
+    _set_numeric_answer(result, value, query, "charge", "uC")
     return result
 
 
@@ -730,7 +828,7 @@ def _solve_parallel_plate_field(schema: dict[str, Any], formula: str) -> SolveRe
 
     result = _new_result()
     result.add_step("Formula selected", "Use parallel-plate field E = U/d.")
-    result.answer = _answer(value, query, "electric_field", "V/m")
+    _set_numeric_answer(result, value, query, "electric_field", "V/m")
     return result
 
 
@@ -777,7 +875,7 @@ def _solve_capacitor_voltage_series(schema: dict[str, Any], formula: str) -> Sol
 
     result = _new_result()
     result.add_step("Formula selected", "Use series capacitor voltage division: U_i = Q/C_i with common Q.")
-    result.answer = _answer(value, query, "voltage", "V")
+    _set_numeric_answer(result, value, query, "voltage", "V")
     return result
 
 
@@ -804,7 +902,7 @@ def _solve_capacitor_energy_density(schema: dict[str, Any], formula: str) -> Sol
 
     result = _new_result()
     result.add_step("Formula selected", "Use electric field energy density u = 1/2*eps0*eps_r*E^2.")
-    result.answer = _answer(value, query, "energy_density", "J/m3")
+    _set_numeric_answer(result, value, query, "energy_density", "J/m3")
     return result
 
 
@@ -1034,7 +1132,7 @@ def _solve_parallel_plate_capacitance_distance_scaling(schema: dict[str, Any], f
 
     result = _new_result()
     result.add_step("Formula selected", "For fixed area and medium, parallel-plate capacitance is inversely proportional to separation: C2 = C1/(d2/d1).")
-    result.answer = _answer(value, query, "capacitance", _raw_unit(c_initial_obj, "F"))
+    _set_numeric_answer(result, value, query, "capacitance", _raw_unit(c_initial_obj, "F"))
     return result
 
 
@@ -1083,7 +1181,7 @@ def _solve_series_capacitance_unknown(schema: dict[str, Any], formula: str) -> S
         "Formula selected",
         "For two capacitors in series, 1/Ceq = 1/C1 + 1/C2.",
     )
-    result.answer = _answer(c_unknown, query, "capacitance", _raw_unit(c_known_obj, "F"))
+    _set_numeric_answer(result, c_unknown, query, "capacitance", _raw_unit(c_known_obj, "F"))
     return result
 
 
@@ -1128,7 +1226,7 @@ def _solve_inductor_energy(schema: dict[str, Any], formula: str) -> SolveResult:
 
     result = _new_result()
     result.add_step("Formula selected", "Use inductor magnetic energy W = 1/2*L*I^2.")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -1172,7 +1270,7 @@ def _solve_lc_resonance_frequency(schema: dict[str, Any], formula: str) -> Solve
 
     result = _new_result()
     result.add_step("Formula selected", "Use LC resonance formula f = 1/(2*pi*sqrt(L*C)).")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -1216,7 +1314,7 @@ def _solve_lc_resonance_angular_frequency(schema: dict[str, Any], formula: str) 
 
     result = _new_result()
     result.add_step("Formula selected", "Use LC angular resonance formula omega = 1/sqrt(L*C).")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -1305,7 +1403,7 @@ def _solve_lc_natural_period(schema: dict[str, Any], formula: str) -> SolveResul
 
     result = _new_result()
     result.add_step("Formula selected", "Use LC natural oscillation T=2*pi*sqrt(L*C), f=1/T, omega=2*pi*f.")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -1326,7 +1424,7 @@ def _solve_lc_max_voltage_charge_capacitance(schema: dict[str, Any], formula: st
         return _fail(str(exc), formula)
     result = _new_result()
     result.add_step("Formula selected", "Use maximum capacitor voltage Umax=Qmax/C.")
-    result.answer = _answer(value, query, "voltage", "V")
+    _set_numeric_answer(result, value, query, "voltage", "V")
     return result
 
 
@@ -1356,7 +1454,7 @@ def _solve_lc_magnetic_energy_current_time(schema: dict[str, Any], formula: str)
         return _fail(str(exc), formula)
     result = _new_result()
     result.add_step("Formula selected", "Use instantaneous magnetic energy Wm=1/2*L*i(t)^2.")
-    result.answer = _answer(value, query, "energy", "J")
+    _set_numeric_answer(result, value, query, "energy", "J")
     return result
 
 
@@ -1388,7 +1486,7 @@ def _solve_lc_energy_complement(schema: dict[str, Any], formula: str) -> SolveRe
         return _fail(str(exc), formula)
     result = _new_result()
     result.add_step("Formula selected", "In an ideal LC circuit, total energy is conserved: W_other = W_total - W_known.")
-    result.answer = _answer(value, query, "energy", "J")
+    _set_numeric_answer(result, value, query, "energy", "J")
     return result
 
 def _solve_ohm_law(schema: dict[str, Any], formula: str) -> SolveResult:
@@ -1429,7 +1527,7 @@ def _solve_ohm_law(schema: dict[str, Any], formula: str) -> SolveResult:
 
     result = _new_result()
     result.add_step("Formula selected", "Use Ohm's law U = I*R.")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -1471,7 +1569,7 @@ def _solve_impedance_voltage_current(schema: dict[str, Any], formula: str) -> So
 
     result = _new_result()
     result.add_step("Formula selected", "Use impedance relation U = I*Z.")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -1513,7 +1611,7 @@ def _solve_power_voltage_current(schema: dict[str, Any], formula: str) -> SolveR
 
     result = _new_result()
     result.add_step("Formula selected", "Use electric power formula P = U*I.")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -1555,7 +1653,7 @@ def _solve_power_voltage_resistance(schema: dict[str, Any], formula: str) -> Sol
 
     result = _new_result()
     result.add_step("Formula selected", "Use resistor/resonance power formula P = U^2/R.")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -1597,7 +1695,7 @@ def _solve_power_current_resistance(schema: dict[str, Any], formula: str) -> Sol
 
     result = _new_result()
     result.add_step("Formula selected", "Use resistor power formula P = I^2*R.")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -1690,7 +1788,7 @@ def _solve_ac_inductive_reactance(schema: dict[str, Any], formula: str) -> Solve
 
     result = _new_result()
     result.add_step("Formula selected", "Use inductive reactance XL = omega*L = 2*pi*f*L.")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -1748,7 +1846,7 @@ def _solve_ac_capacitive_reactance(schema: dict[str, Any], formula: str) -> Solv
 
     result = _new_result()
     result.add_step("Formula selected", "Use capacitive reactance XC = 1/(omega*C) = 1/(2*pi*f*C).")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -1817,7 +1915,7 @@ def _solve_rlc_resonance_impedance_resistance(schema: dict[str, Any], formula: s
 
     result = _new_result()
     result.add_step("Formula selected", "At resonance in a series RLC circuit, XL=XC so total impedance equals pure resistance: Z=R.")
-    result.answer = _answer(value, query, qtype, "ohm")
+    _set_numeric_answer(result, value, query, qtype, "ohm")
     return result
 
 def _solve_rlc_power_voltage_impedance_resistance(schema: dict[str, Any], formula: str) -> SolveResult:
@@ -1837,7 +1935,7 @@ def _solve_rlc_power_voltage_impedance_resistance(schema: dict[str, Any], formul
 
     result = _new_result()
     result.add_step("Formula selected", "Use RLC real power P = I^2 R = (U/Z)^2 R.")
-    result.answer = _answer(value, p_query, "power", "W")
+    _set_numeric_answer(result, value, p_query, "power", "W")
     return result
 
 
@@ -1876,7 +1974,7 @@ def _solve_ac_impedance(schema: dict[str, Any], formula: str) -> SolveResult:
 
     result = _new_result()
     result.add_step("Formula selected", "Use series RLC impedance Z = sqrt(R^2 + (XL-XC)^2), computing XL/XC from f,L,C if needed.")
-    result.answer = _answer(value, query, "impedance", "ohm")
+    _set_numeric_answer(result, value, query, "impedance", "ohm")
     return result
 
 
@@ -1893,7 +1991,7 @@ def _solve_power_factor(schema: dict[str, Any], formula: str) -> SolveResult:
 
     result = _new_result()
     result.add_step("Formula selected", "Use power factor cos(phi) = R/Z.")
-    result.answer = _answer(value, query, "power_factor", "-")
+    _set_numeric_answer(result, value, query, "power_factor", "-")
     return result
 
 
@@ -1911,7 +2009,7 @@ def _solve_quality_factor(schema: dict[str, Any], formula: str) -> SolveResult:
 
     result = _new_result()
     result.add_step("Formula selected", "Use series RLC quality factor Q = sqrt(L/C)/R.")
-    result.answer = _answer(value, query, "quality_factor", "-")
+    _set_numeric_answer(result, value, query, "quality_factor", "-")
     return result
 
 
@@ -2085,7 +2183,7 @@ def _solve_rlc_frequency_scaled_response(schema: dict[str, Any], formula: str) -
         "Formula selected",
         "After frequency scaling by k, use XL'=k*XL, XC'=XC/k, Z'=sqrt(R^2+(XL'-XC')^2), then derive I, UR, UL/UC, or P.",
     )
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -2127,7 +2225,7 @@ def _solve_rlc_component_voltage_at_resonance(schema: dict[str, Any], formula: s
         "Formula selected",
         "At resonance, I=U/R and XL=XC=sqrt(L/C); component voltage is U_L=I*XL or U_C=I*XC.",
     )
-    result.answer = _answer(value, query, "voltage", "V")
+    _set_numeric_answer(result, value, query, "voltage", "V")
     return result
 
 
@@ -2199,7 +2297,7 @@ def _solve_solenoid_turn_density(schema: dict[str, Any], formula: str) -> SolveR
 
     result = _new_result()
     result.add_step("Formula selected", "Use solenoid turn density n = N/l.")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -2244,7 +2342,7 @@ def _solve_solenoid_magnetic_field(schema: dict[str, Any], formula: str) -> Solv
 
     result = _new_result()
     result.add_step("Formula selected", "Use long-solenoid magnetic field B = mu0*n*I = mu0*N*I/l.")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -2265,7 +2363,7 @@ def _solve_solenoid_inductance(schema: dict[str, Any], formula: str) -> SolveRes
 
     result = _new_result()
     result.add_step("Formula selected", "Use ideal solenoid inductance L = mu0*N^2*A/l.")
-    result.answer = _answer(value, query, "inductance", "mH")
+    _set_numeric_answer(result, value, query, "inductance", "mH")
     return result
 
 
@@ -2295,7 +2393,7 @@ def _solve_magnetic_flux(schema: dict[str, Any], formula: str) -> SolveResult:
 
     result = _new_result()
     result.add_step("Formula selected", "Use magnetic flux through one turn/cross-section Phi = B*A.")
-    result.answer = _answer(value, query, "magnetic_flux", "Wb")
+    _set_numeric_answer(result, value, query, "magnetic_flux", "Wb")
     return result
 
 
@@ -2319,7 +2417,7 @@ def _solve_magnetic_flux_linkage(schema: dict[str, Any], formula: str) -> SolveR
 
     result = _new_result()
     result.add_step("Formula selected", "Use total flux linkage lambda = N*Phi = N*B*A.")
-    result.answer = _answer(value, query, "magnetic_flux", "Wb")
+    _set_numeric_answer(result, value, query, "magnetic_flux", "Wb")
     return result
 
 
@@ -2341,7 +2439,7 @@ def _solve_magnetic_energy_density(schema: dict[str, Any], formula: str) -> Solv
 
     result = _new_result()
     result.add_step("Formula selected", "Use magnetic field energy density u = B^2/(2*mu0).")
-    result.answer = _answer(value, query, "energy_density", "J/m3")
+    _set_numeric_answer(result, value, query, "energy_density", "J/m3")
     return result
 
 
@@ -2386,7 +2484,7 @@ def _solve_point_charge_electric_field(schema: dict[str, Any], formula: str) -> 
 
     result = _new_result()
     result.add_step("Formula selected", "Use point-charge electric field E = k|q|/(eps_r*r^2).")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -2428,7 +2526,7 @@ def _solve_electric_force_field(schema: dict[str, Any], formula: str) -> SolveRe
 
     result = _new_result()
     result.add_step("Formula selected", "Use electric force relation F = |q|E.")
-    result.answer = _answer(value, query, quantity_type, default_unit)
+    _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
@@ -2453,7 +2551,7 @@ def _solve_equilibrium_electric_field(schema: dict[str, Any], formula: str) -> S
 
     result = _new_result()
     result.add_step("Formula selected", "For vertical electric equilibrium, balance |q|E = mg.")
-    result.answer = _answer(value, query, "electric_field", "V/m")
+    _set_numeric_answer(result, value, query, "electric_field", "V/m")
     return result
 
 
@@ -2524,7 +2622,7 @@ def _solve_two_charge_zero_field_distance(schema: dict[str, Any], formula: str) 
         "Formula selected",
         "Solve the 1D point where fields from two charges cancel: |q1|/r1^2 = |q2|/r2^2.",
     )
-    result.answer = _answer(value, query, "distance", "m")
+    _set_numeric_answer(result, value, query, "distance", "m")
     return result
 
 
@@ -2557,7 +2655,7 @@ def _solve_two_field_vector_resultant(schema: dict[str, Any], formula: str) -> S
 
     result = _new_result()
     result.add_step("Formula selected", "Compute E1 and E2 from point-charge fields, then combine vectors by the law of cosines.")
-    result.answer = _answer(value, query, "electric_field", "V/m")
+    _set_numeric_answer(result, value, query, "electric_field", "V/m")
     return result
 
 
@@ -2625,7 +2723,7 @@ def _solve_two_charge_geometry_field(schema: dict[str, Any], formula: str) -> So
 
     result = _new_result()
     result.add_step("Formula selected", "Build coordinates for A, B, and target M/C, superpose electric-field vectors, and optionally multiply by a test charge.")
-    result.answer = _answer(value, query, qtype, unit)
+    _set_numeric_answer(result, value, query, qtype, unit)
     return result
 
 
@@ -2637,7 +2735,7 @@ def _solve_symbolic_equal_perpendicular_resultant(schema: dict[str, Any], formul
     expr = SymbolicExpr.sqrt(2) * SymbolicExpr.symbol("F0")
     result = _new_result()
     result.add_step("Formula selected", "Two equal perpendicular vectors of magnitude F0 have resultant sqrt(2)*F0.")
-    result.answer = expr.render()
+    _set_symbolic_expr_answer(result, expr, unit="N", variables={"F0": "k*q*q0/a^2"}, formula=formula)
     return result
 
 
@@ -2648,7 +2746,8 @@ def _solve_direction_between_collinear_charges(schema: dict[str, Any], formula: 
     target = str(query.get("target_symbol") or "q2")
     result = _new_result()
     result.add_step("Formula selected", "For a point between opposite-sign charges, the field points toward the negative charge.")
-    result.answer = DirectionalAnswer(target).render()
+    direction = DirectionalAnswer(target)
+    _set_direction_answer(result, direction, formula=formula)
     return result
 
 
@@ -2668,7 +2767,7 @@ def _solve_symbolic_field_ratio_from_force_charge_ratios(schema: dict[str, Any],
     relation = SymbolicRelation(str(query.get("left") or "E1"), expr)
     result = _new_result()
     result.add_step("Formula selected", "Use E=F/q, so E1/E2=(F1/F2)/(q1/q2).")
-    result.answer = relation.render()
+    _set_symbolic_relation_answer(result, relation, unit="-", formula=formula)
     return result
 
 
@@ -2679,7 +2778,7 @@ def _solve_symbolic_right_isosceles_altitude_field(schema: dict[str, Any], formu
     expr = SymbolicExpr.number(2) * SymbolicExpr.sqrt(2) * SymbolicExpr.symbol("k") * SymbolicExpr.symbol("q") / SymbolicExpr.symbol("a", 2)
     result = _new_result()
     result.add_step("Formula selected", "Symbolic vector decomposition at the altitude foot simplifies to 2*sqrt(2)*k*q/a^2.")
-    result.answer = expr.render()
+    _set_symbolic_expr_answer(result, expr, unit="V/m", variables={"k": "Coulomb constant", "q": "charge", "a": "side length"}, formula=formula)
     return result
 
 
@@ -2690,7 +2789,7 @@ def _solve_symbolic_square_field_zero_missing_charge(schema: dict[str, Any], for
     expr = -(SymbolicExpr.number(2) * SymbolicExpr.sqrt(2) * SymbolicExpr.symbol("q"))
     result = _new_result()
     result.add_step("Formula selected", "Balancing the field at the fourth square vertex gives q_B=-2*sqrt(2)*q.")
-    result.answer = expr.render()
+    _set_symbolic_expr_answer(result, expr, unit="C", variables={"q": "reference charge"}, formula=formula)
     return result
 
 def _solve_constant_zero_result(schema: dict[str, Any], formula: str) -> SolveResult:
@@ -2701,7 +2800,7 @@ def _solve_constant_zero_result(schema: dict[str, Any], formula: str) -> SolveRe
     unit = "N" if qtype == "force" else "V/m"
     result = _new_result()
     result.add_step("Formula selected", "By symmetry, equal vector contributions cancel at the stated midpoint/center.")
-    result.answer = _answer(0.0, query, qtype, unit)
+    _set_numeric_answer(result, 0.0, query, qtype, unit)
     return result
 
 
@@ -2718,7 +2817,7 @@ def _solve_square_center_zero_field_missing_vertex_charge(schema: dict[str, Any]
         return _fail(str(exc), formula)
     result = _new_result()
     result.add_step("Formula selected", "At the square center, opposite vertices cancel pairwise; set the missing charge equal to its opposite vertex.")
-    result.answer = _answer(value_si, query, "charge", "C")
+    _set_numeric_answer(result, value_si, query, "charge", "C")
     return result
 
 def _solve_coulomb_force_two_charges(schema: dict[str, Any], formula: str) -> SolveResult:
@@ -2741,7 +2840,7 @@ def _solve_coulomb_force_two_charges(schema: dict[str, Any], formula: str) -> So
 
     result = _new_result()
     result.add_step("Formula selected", "Use Coulomb force F = k|q1*q2|/r^2 to solve the unknown charge magnitude.")
-    result.answer = _answer(value, query, "charge", "C")
+    _set_numeric_answer(result, value, query, "charge", "C")
     return result
 
 
@@ -2775,7 +2874,7 @@ def _solve_two_charge_zero_field_unknown_charges(schema: dict[str, Any], formula
 
     result = _new_result()
     result.add_step("Formula selected", "Use E=0 and q1+q2=S to solve the two unknown charges.")
-    result.answer = _answer(value, query, "charge", "C")
+    _set_numeric_answer(result, value, query, "charge", "C")
     return result
 
 
@@ -2793,7 +2892,7 @@ def _solve_point_charge_field_scaling(schema: dict[str, Any], formula: str) -> S
         return _fail(str(exc), formula)
     result = _new_result()
     result.add_step("Formula selected", "Use point-charge scaling E' / E = |q'/q| / (r'/r)^2.")
-    result.answer = _answer(value, query, "ratio", "times")
+    _set_numeric_answer(result, value, query, "ratio", "times")
     return result
 
 
@@ -2814,7 +2913,7 @@ def _solve_electric_pendulum_deflection_angle(schema: dict[str, Any], formula: s
         return _fail(str(exc), formula)
     result = _new_result()
     result.add_step("Formula selected", "For a charged pendulum in a horizontal electric field, tan(theta)=|q|E/(mg).")
-    result.answer = _answer(value, query, "angle", "rad")
+    _set_numeric_answer(result, value, query, "angle", "rad")
     return result
 
 
@@ -2832,7 +2931,7 @@ def _solve_dielectric_field_scaling(schema: dict[str, Any], formula: str) -> Sol
         return _fail(str(exc), formula)
     result = _new_result()
     result.add_step("Formula selected", "For the same point charge and distance, a dielectric reduces E by eps_r.")
-    result.answer = _answer(value, query, "electric_field", "V/m")
+    _set_numeric_answer(result, value, query, "electric_field", "V/m")
     return result
 
 
@@ -2856,7 +2955,7 @@ def _solve_midpoint_field_from_two_field_values(schema: dict[str, Any], formula:
         return _fail(str(exc), formula)
     result = _new_result()
     result.add_step("Formula selected", "Use point-charge relation 1/sqrt(E) proportional to distance along a field line.")
-    result.answer = _answer(value, query, "electric_field", "V/m")
+    _set_numeric_answer(result, value, query, "electric_field", "V/m")
     return result
 
 
@@ -2878,7 +2977,7 @@ def _solve_infinite_wire_electric_field(schema: dict[str, Any], formula: str) ->
 
     result = _new_result()
     result.add_step("Formula selected", "Use infinite-wire electric field E = 2k|lambda|/(eps_r*r).")
-    result.answer = _answer(value, query, "electric_field", "V/m")
+    _set_numeric_answer(result, value, query, "electric_field", "V/m")
     return result
 
 
@@ -3057,7 +3156,7 @@ def _solve_random_error_half_range(schema: dict[str, Any], formula: str) -> Solv
 
     result = _new_result()
     result.add_step("Formula selected", "Use random error as half range: Delta = (max - min)/2.")
-    result.answer = _answer(value, query, "random_error", unit)
+    _set_numeric_answer(result, value, query, "random_error", unit)
     return result
 
 
@@ -3079,7 +3178,7 @@ def _solve_measurement_maximum(schema: dict[str, Any], formula: str) -> SolveRes
 
     result = _new_result()
     result.add_step("Formula selected", "Maximum possible measured value is measured value plus absolute uncertainty.")
-    result.answer = _answer(value, query, "maximum_value", unit)
+    _set_numeric_answer(result, value, query, "maximum_value", unit)
     return result
 
 
@@ -3111,7 +3210,7 @@ def _solve_resistance_uncertainty_quotient(schema: dict[str, Any], formula: str)
 
     result = _new_result()
     result.add_step("Formula selected", "For R=U/I, relative uncertainty adds: DeltaR/R = DeltaU/U + DeltaI/I.")
-    result.answer = _answer(delta_r, query, "absolute_error", "ohm")
+    _set_numeric_answer(result, delta_r, query, "absolute_error", "ohm")
     return result
 
 
@@ -3167,7 +3266,7 @@ def _solve_capacitor_plate_force_by_charge_area(schema: dict[str, Any], formula:
         "Formula selected",
         "Use capacitor plate attraction force F = Q^2/(2*eps0*eps_r*A).",
     )
-    result.answer = _answer(value, query, "force", "N")
+    _set_numeric_answer(result, value, query, "force", "N")
     return result
 
 
@@ -3192,7 +3291,7 @@ def _solve_self_inductance_from_emf(schema: dict[str, Any], formula: str) -> Sol
         "Formula selected",
         "Use self-induction relation |emf| = L*|dI|/dt, so L = |emf|*dt/|dI|.",
     )
-    result.answer = _answer(value, query, "inductance", "H")
+    _set_numeric_answer(result, value, query, "inductance", "H")
     return result
 
 
@@ -3222,7 +3321,7 @@ def _solve_equilibrium_mass_with_angle(schema: dict[str, Any], formula: str) -> 
         "Formula selected",
         "For equilibrium with a string angle theta from vertical, tan(theta)=|q|E/(mg).",
     )
-    result.answer = _answer(value, query, "mass", "kg")
+    _set_numeric_answer(result, value, query, "mass", "kg")
     return result
 
 
@@ -3246,7 +3345,7 @@ def _solve_lc_current_amplitude_from_charge_amplitude(schema: dict[str, Any], fo
 
     result = _new_result()
     result.add_step("Formula selected", "In an LC circuit, current amplitude is I0 = omega*Q0.")
-    result.answer = _answer(value, query, "current_amplitude", "A")
+    _set_numeric_answer(result, value, query, "current_amplitude", "A")
     return result
 
 
@@ -3280,7 +3379,7 @@ def _solve_harmonic_current_cos_time(schema: dict[str, Any], formula: str) -> So
 
     result = _new_result()
     result.add_step("Formula selected", "Use sinusoidal current i(t)=I0*cos(omega*t+phi).")
-    result.answer = _answer(value, query, "current", "A")
+    _set_numeric_answer(result, value, query, "current", "A")
     return result
 
 
@@ -3300,7 +3399,7 @@ def _solve_harmonic_voltage_cos_time(schema: dict[str, Any], formula: str) -> So
 
     result = _new_result()
     result.add_step("Formula selected", "Use sinusoidal voltage u(t)=U0*cos(omega*t+phi).")
-    result.answer = _answer(value, query, "voltage", "V")
+    _set_numeric_answer(result, value, query, "voltage", "V")
     return result
 
 
@@ -3320,7 +3419,7 @@ def _solve_harmonic_charge_cos_time(schema: dict[str, Any], formula: str) -> Sol
 
     result = _new_result()
     result.add_step("Formula selected", "Use sinusoidal charge q(t)=Q0*cos(omega*t+phi).")
-    result.answer = _answer(value, query, "charge", "C")
+    _set_numeric_answer(result, value, query, "charge", "C")
     return result
 
 
@@ -3338,7 +3437,7 @@ def _solve_lc_electric_energy_time(schema: dict[str, Any], formula: str) -> Solv
 
     result = _new_result()
     result.add_step("Formula selected", "In an ideal LC circuit, electric energy We=Wtotal*cos^2(omega*t+phi).")
-    result.answer = _answer(value, query, "energy", "J")
+    _set_numeric_answer(result, value, query, "energy", "J")
     return result
 
 
@@ -3356,7 +3455,7 @@ def _solve_lc_magnetic_energy_time(schema: dict[str, Any], formula: str) -> Solv
 
     result = _new_result()
     result.add_step("Formula selected", "In an ideal LC circuit, magnetic energy Wm=Wtotal*sin^2(omega*t+phi).")
-    result.answer = _answer(value, query, "energy", "J")
+    _set_numeric_answer(result, value, query, "energy", "J")
     return result
 
 
@@ -3379,7 +3478,7 @@ def _solve_parallel_resistance(schema: dict[str, Any], formula: str) -> SolveRes
         return _fail(str(exc), formula)
     result = _new_result()
     result.add_step("Formula selected", "Use parallel resistance 1/R = sum(1/R_i).")
-    result.answer = _answer(value, query, "resistance", "ohm")
+    _set_numeric_answer(result, value, query, "resistance", "ohm")
     return result
 
 
@@ -3503,7 +3602,7 @@ def _solve_parallel_branch_current(schema: dict[str, Any], formula: str) -> Solv
 
     result = _new_result()
     result.add_step("Formula selected", "In a parallel circuit, each branch has the source voltage, so I_i = U/R_i.")
-    result.answer = _answer(value, query, "current", "A")
+    _set_numeric_answer(result, value, query, "current", "A")
     return result
 
 
@@ -3527,7 +3626,7 @@ def _solve_parallel_total_current(schema: dict[str, Any], formula: str) -> Solve
 
     result = _new_result()
     result.add_step("Formula selected", "In a parallel circuit, branch currents add: I_total = sum(U/R_i).")
-    result.answer = _answer(value, query, "current", "A")
+    _set_numeric_answer(result, value, query, "current", "A")
     return result
 
 
@@ -3547,7 +3646,7 @@ def _solve_parallel_branch_power(schema: dict[str, Any], formula: str) -> SolveR
 
     result = _new_result()
     result.add_step("Formula selected", "In a parallel circuit, each branch has voltage U, so P_i = U^2/R_i.")
-    result.answer = _answer(value, query, "power", "W")
+    _set_numeric_answer(result, value, query, "power", "W")
     return result
 
 
@@ -3571,7 +3670,7 @@ def _solve_parallel_total_power(schema: dict[str, Any], formula: str) -> SolveRe
 
     result = _new_result()
     result.add_step("Formula selected", "In a parallel circuit, powers add: P_total = sum(U^2/R_i).")
-    result.answer = _answer(value, query, "power", "W")
+    _set_numeric_answer(result, value, query, "power", "W")
     return result
 
 
@@ -3592,7 +3691,7 @@ def _solve_total_power_sum(schema: dict[str, Any], formula: str) -> SolveResult:
 
     result = _new_result()
     result.add_step("Formula selected", "Total power of branches/lamps is the sum of their powers.")
-    result.answer = _answer(value, query, "power", "W")
+    _set_numeric_answer(result, value, query, "power", "W")
     return result
 
 
@@ -3636,7 +3735,7 @@ def _solve_instrument_absolute_error(schema: dict[str, Any], formula: str) -> So
 
     result = _new_result()
     result.add_step("Formula selected", "For this dataset, absolute instrument error equals the least count.")
-    result.answer = _answer(value, query, "absolute_error", unit)
+    _set_numeric_answer(result, value, query, "absolute_error", unit)
     return result
 
 
