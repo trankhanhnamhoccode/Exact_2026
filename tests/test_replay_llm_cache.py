@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+import csv
+import json
+
+from xai_physics.eval.replay_llm_dataset import run_replay_benchmark
+from xai_physics.llm.replay_cache import ReplaySchemaLLM, load_replay_cache, parse_eval_log, write_replay_cache
+from xai_physics.llm.schema_pipeline import solve_problem_with_llm
+
+
+TD009_LOG = """
+====================================================================================================
+[10/500] row=109 id=TD009
+
+QUESTION:
+A parallel-plate capacitor has circular plates with a radius of 10 cm. The distance between the plates and the potential difference across them are 1 cm and 108 V, respectively. The space between the plates is air. What is the charge on the capacitor?
+
+RESULT:
+status: solve_failed
+domain: equations
+answer: None
+expected: 3
+expected_unit: nC
+correct: False
+elapsed_sec: 9.363
+
+SCHEMA:
+{
+  "domain": "equations",
+  "objects": [
+    {"id": "C1", "type": "capacitance", "role": "constant", "value": null, "unit": "uF"},
+    {"id": "U1", "type": "voltage", "role": "given", "value": "108", "unit": "V"},
+    {"id": "Q_query", "type": "charge", "role": "query", "value": null, "unit": "uC"}
+  ],
+  "relations": [
+    {"type": "formula", "name": "capacitor_charge_voltage", "objects": ["Q_query", "C1", "U1"]}
+  ],
+  "constraints": []
+}
+
+RUNNING SUMMARY:
+solved: 9 | failed: 1
+"""
+
+
+def test_parse_eval_log_to_replay_cache_entries():
+    entries = parse_eval_log(TD009_LOG)
+
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.case_id == "TD009"
+    assert entry.row == 109
+    assert "radius of 10 cm" in entry.question
+    assert entry.schema["domain"] == "equations"
+    assert entry.metadata == {
+        "status": "solve_failed",
+        "domain": "equations",
+        "answer": "None",
+        "expected": "3",
+        "expected_unit": "nC",
+        "correct": False,
+        "elapsed_sec": 9.363,
+    }
+
+
+def test_replay_llm_returns_cached_schema_and_pipeline_can_repair(tmp_path):
+    entries = parse_eval_log(TD009_LOG)
+    cache_path = tmp_path / "cache.jsonl"
+    write_replay_cache(entries, cache_path)
+    cache = load_replay_cache(cache_path)
+    client = ReplaySchemaLLM(cache)
+
+    client.set_case_id("TD009")
+    output = solve_problem_with_llm(entries[0].question, client, k=2)
+
+    assert output.solve_result.status == "ok", output.solve_result.error
+    assert output.schema is not None
+    assert output.schema["relations"][0]["name"] == "parallel_plate_charge_from_voltage"
+    assert "3.004" in str(output.solve_result.answer)
+
+
+def test_replay_dataset_runner_uses_cache_by_case_id(tmp_path):
+    entries = parse_eval_log(TD009_LOG)
+    cache_path = tmp_path / "cache.jsonl"
+    write_replay_cache(entries, cache_path)
+
+    dataset_path = tmp_path / "dataset.csv"
+    with dataset_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["id", "question", "answer", "unit"])
+        writer.writeheader()
+        writer.writerow({"id": "TD009", "question": entries[0].question, "answer": "3", "unit": "nC"})
+
+    report = run_replay_benchmark(dataset=dataset_path, cache_path=cache_path, k=2)
+
+    assert report["total"] == 1
+    assert report["solved"] == 1
+    assert report["correct"] == 1
+    assert report["results"][0]["schema_source"] == "formula_driven"

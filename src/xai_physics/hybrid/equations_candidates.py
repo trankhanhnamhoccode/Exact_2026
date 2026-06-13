@@ -37,6 +37,48 @@ def _quantity(value: float, unit: str) -> dict[str, Any]:
     return {"value": str(value), "unit": _unit(unit)}
 
 
+def _to_si_capacitance(value: float, unit: str) -> float | None:
+    factors = {
+        "f": 1.0,
+        "farad": 1.0,
+        "farads": 1.0,
+        "mf": 1e-3,
+        "uf": 1e-6,
+        "microfarad": 1e-6,
+        "microfarads": 1e-6,
+        "nf": 1e-9,
+        "nanofarad": 1e-9,
+        "nanofarads": 1e-9,
+        "pf": 1e-12,
+        "picofarad": 1e-12,
+        "picofarads": 1e-12,
+    }
+    factor = factors.get(_unit(unit).lower())
+    return None if factor is None else value * factor
+
+
+def _to_si_voltage(value: float, unit: str) -> float | None:
+    factors = {"v": 1.0, "volt": 1.0, "volts": 1.0, "mv": 1e-3, "kv": 1e3}
+    factor = factors.get(_unit(unit).lower())
+    return None if factor is None else value * factor
+
+
+def _energy_query_unit(capacitance: tuple[float, str], voltage: tuple[float, str]) -> str:
+    c_si = _to_si_capacitance(*capacitance)
+    u_si = _to_si_voltage(*voltage)
+    if c_si is None or u_si is None:
+        return "J"
+
+    energy_j = 0.5 * c_si * u_si * u_si
+    if energy_j >= 1e-3:
+        return "J"
+    if energy_j >= 1e-6:
+        return "uJ"
+    if energy_j >= 1e-9:
+        return "nJ"
+    return "pJ"
+
+
 def _find_quantity(patterns: list[str], text: str) -> tuple[float, str] | None:
     for pattern in patterns:
         m = re.search(pattern, text, flags=re.I)
@@ -210,7 +252,7 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
                 [
                     {"id": "C1", "type": "capacitance", "role": "given", **_quantity(*c)},
                     {"id": "U1", "type": "voltage", "role": "given", **_quantity(*u)},
-                    {"id": "W_query", "type": "energy", "role": "query", "value": None, "unit": "J"},
+                    {"id": "W_query", "type": "energy", "role": "query", "value": None, "unit": _energy_query_unit(c, u)},
                 ],
             )
         )
