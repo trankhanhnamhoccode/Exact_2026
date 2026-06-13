@@ -551,7 +551,10 @@ Canonical schema shape:
 
 Important:
 - Use only formula names from Relevant formula docs.
-- Use the retrieved schema_template as the closest structural guide.
+- Formula schema_template is only a structural guide, not a fixed query pattern.
+- The same formula can solve for different variables; choose the query object from the question wording, not from the first template/example.
+- Balance roles carefully: values explicitly given in the problem are role="given"; the asked quantity is role="query" and value=null.
+- For scaling/factor questions, extract ratio objects such as U_ratio, C_ratio, Q_ratio, W_ratio_query instead of inventing unknown absolute values.
 - Do not invent formula names.
 - Do not compute derived quantities in the schema.
 - Use original numeric values from the problem.

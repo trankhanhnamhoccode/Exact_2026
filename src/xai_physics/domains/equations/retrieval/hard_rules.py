@@ -52,20 +52,22 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
     def add(formula_id: str, score: float) -> None:
         scores[formula_id] = max(scores.get(formula_id, 0.0), score)
 
-    is_scaling_question = any(
-        phrase in text
-        for phrase in [
-            "how many times",
-            "by what factor",
-            "ratio",
-            "doubled",
-            "tripled",
-            "halved",
-            "constant voltage",
-            "constant capacitance",
-            "change",
-            "changes",
-        ]
+    is_scaling_question = (
+        any(
+            phrase in text
+            for phrase in [
+                "how many times",
+                "by what factor",
+                "doubled",
+                "tripled",
+                "halved",
+                "constant voltage",
+                "constant capacitance",
+                "change",
+                "changes",
+            ]
+        )
+        or re.search(r"\bratio\b", text) is not None
     )
 
     if (
@@ -123,6 +125,26 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
 
     if "constant capacitance" in text and "energy" in text and "voltage" in text:
         add("capacitor_energy_voltage_scaling_constant_capacitance", 5.0)
+
+    # Voltage-ratio scaling trap:
+    # "electric field energy" often triggers ordinary capacitor energy, but if the
+    # question asks how many times/by what factor after voltage is doubled/tripled/etc.,
+    # the correct schema should use U_ratio and W_ratio_query.
+    has_voltage_ratio_change = (
+        re.search(r"(?:voltage|potential difference|\bu\b).{0,40}(?:doubled|tripled|halved|increases|decreases|increased|decreased|multiplied)", text)
+        is not None
+        or re.search(r"(?:doubled|tripled|halved).{0,40}(?:voltage|potential difference|\bu\b)", text)
+        is not None
+    )
+    if (
+        is_scaling_question
+        and has_voltage_ratio_change
+        and ("constant voltage" not in text)
+        and ("capacitor" in text or "capacitance" in text)
+        and ("energy" in text or "stored" in text or "electric field energy" in text)
+        and "energy density" not in text
+    ):
+        add("capacitor_energy_voltage_scaling_constant_capacitance", 8.0)
 
     if "inductor" in text and ("energy" in text or "magnetic energy" in text):
         add("inductor_energy", 5.0)

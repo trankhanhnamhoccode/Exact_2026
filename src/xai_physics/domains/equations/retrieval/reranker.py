@@ -69,10 +69,18 @@ def rank_examples(
     reranker_backend = reranker_backend or HeuristicRerankerBackend()
 
     ranked: list[RetrievedExample] = []
+    # Prefer examples whose formula matches the highest-ranked formula, but still
+    # allow secondary formula examples as supporting context. A flat score for every
+    # selected formula made generic/secondary examples outrank the top formula's
+    # canonical example when wording overlapped.
+    formula_rank_score = {
+        formula_id: max(0.0, 5.0 - 2.0 * idx)
+        for idx, formula_id in enumerate(selected_formula_ids)
+    }
 
     for example in examples:
         vector_score = embedding_backend.score(problem, example.searchable_text())
-        formula_score = 2.0 if example.formula_id in selected_formula_ids else 0.0
+        formula_score = formula_rank_score.get(example.formula_id, 0.0)
         tag_score, matched_tags = _tag_score(example.tags, tag_hits)
 
         rerank_score = reranker_backend.score_example(

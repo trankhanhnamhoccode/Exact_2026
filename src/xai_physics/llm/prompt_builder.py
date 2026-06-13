@@ -106,8 +106,8 @@ def _build_equations_context(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], dict[str, Any]]:
     retrieval = retrieve_equations_context(
         problem=problem,
-        formula_top_k=max(3, k + 1),
-        example_top_k=k,
+        formula_top_k=max(5, k + 3),
+        example_top_k=max(5, k + 3),
     )
 
     formulas: list[dict[str, Any]] = []
