@@ -19,6 +19,8 @@ SUPPORTED_EVENTS = {
     "ShortCircuit",
     "ConnectToInductor",
     "ReplaceDielectric",
+    "ReplaceCapacitor",
+    "SetCapacitance",
 }
 
 SUPPORTED_QUERIES = {
@@ -29,6 +31,8 @@ SUPPORTED_QUERIES = {
     "energy_ratio",
     "capacitance_ratio",
     "energy_percent",
+    "energy_change",
+    "energy_reduction",
 }
 
 
@@ -166,6 +170,20 @@ def _validate_event(event: dict[str, Any], index: int, entity_ids: set[str]) -> 
         k = params.get("dielectric_constant", params.get("k"))
         if not isinstance(k, (int, float)) or k <= 0:
             _err(f"{path}.params.dielectric_constant must be a positive number.")
+
+    if event_type in {"ReplaceCapacitor", "SetCapacitance"}:
+        new_cap = (
+            params.get("new_capacitance")
+            or params.get("capacitance")
+            or params.get("final_capacitance")
+        )
+        _validate_quantity(new_cap, f"{path}.params.new_capacitance")
+        if new_cap is None or new_cap == {} or new_cap.get("value") is None:
+            _err(f"{path}.params.new_capacitance is required.")
+
+        hold = params.get("hold") or params.get("hold_policy") or params.get("voltage_policy")
+        if hold is not None and not isinstance(hold, str):
+            _err(f"{path}.params.hold must be a string if provided.")
 
     if event_type in {"DistanceScale", "AreaScale"}:
         factor = params.get("factor")

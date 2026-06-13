@@ -20,6 +20,7 @@ Use this domain for problems involving:
 - plate area change
 - isolated capacitors connected together
 - charge redistribution between capacitors
+- one capacitor replaced by another capacitor with a different capacitance
 - capacitor energy, charge, voltage, capacitance queries
 
 ============================================================
@@ -190,6 +191,25 @@ Rules:
 - Use this for phrases such as "short-circuited", "short circuit", or "plates are connected by a wire".
 - Do not compute final charge or energy in the schema.
 
+8. ReplaceCapacitor
+
+Use when one capacitor is replaced by another capacitor with a given capacitance.
+Do NOT use ReplaceDielectric for this. ReplaceDielectric is only for dielectric constant/permittivity/material replacement.
+
+Examples:
+- "replaced by another capacitor with a capacitance of 4 μF" -> ReplaceCapacitor
+- "while maintaining the same voltage" -> params.hold = "voltage"
+- "after being disconnected" or "charge remains constant" -> params.hold = "charge"
+
+{
+  "type": "ReplaceCapacitor",
+  "apply_to": ["C1"],
+  "params": {
+    "new_capacitance": {"value": <number>, "unit": "<unit>"},
+    "hold": "voltage|charge|auto"
+  }
+}
+
 ============================================================
 QUERIES
 ============================================================
@@ -200,6 +220,8 @@ Allowed query types:
 - capacitance
 - energy
 - energy_ratio
+- energy_change
+- energy_reduction
 
 Query target:
 - Use a capacitor id such as "C1" for single-capacitor questions.
@@ -237,13 +259,29 @@ Use this query when the problem asks "how many times", "how will the energy chan
 
 Rules:
 - Use energy_ratio only when the question asks for a ratio/change factor, not an absolute energy value.
+- Do not use energy_ratio for "reduction in energy" when the expected answer is an energy unit such as μJ or J. Use energy_reduction.
 - For disconnected parallel-plate capacitors, charge remains constant.
 - If plate distance is scaled while charge remains constant, represent that as a DistanceScale event.
+
+Energy reduction query:
+
+Use this query when the question asks for absolute "reduction in energy", "energy lost", or "decrease in energy".
+
+{
+  "type": "energy_reduction",
+  "target": "C1",
+  "unit": "μJ"
+}
+
+Rules:
+- energy_reduction = initial energy - final energy.
+- Use this for absolute energy units, not for ratio/factor questions.
 
 
 ReplaceDielectric event:
 
-Use this when a dielectric material with one dielectric constant is replaced by another.
+Use this only when a dielectric material/permittivity/dielectric constant with one value is replaced by another.
+Do NOT use ReplaceDielectric when the problem says "replaced by another capacitor with capacitance ...". Use ReplaceCapacitor instead.
 
 {
   "type": "ReplaceDielectric",

@@ -52,7 +52,10 @@ CAPACITOR_STATE_KEYWORDS = {
     "replace dielectric": "replace_dielectric",
     "replaced by dielectric": "replace_dielectric",
     "replaced by another dielectric": "replace_dielectric",
-    "replaced": "replace_dielectric",
+    "replaced by another capacitor": "replace_capacitor",
+    "replaced with another capacitor": "replace_capacitor",
+    "replaced by another capacitor with": "replace_capacitor",
+    "replaced": "state_transition",
     "plate separation is doubled": "distance_scale",
     "distance is doubled": "distance_scale",
     "distance between them is doubled": "distance_scale",
@@ -153,6 +156,14 @@ def classify_domain(problem: str) -> DomainDecision:
         and ("replace" in text or "replaced" in text)
     )
 
+    has_capacitor_replace = (
+        has_capacitor
+        and ("replace" in text or "replaced" in text)
+        and "another capacitor" in text
+        and "dielectric" not in text
+        and "permittivity" not in text
+    )
+
     has_connected_source_event = has_capacitor and any(k in text for k in [
         "while still connected",
         "remains connected",
@@ -182,10 +193,12 @@ def classify_domain(problem: str) -> DomainDecision:
 
     # Capacitor state requires a real event/state transition.
     # Plain capacitor formulas stay equations.
-    if has_capacitor and (state_score > 0 or has_dielectric_replace or has_connected_source_event):
+    if has_capacitor and (state_score > 0 or has_dielectric_replace or has_capacitor_replace or has_connected_source_event):
         state_score += 3 + cap_base_score
         if has_dielectric_replace:
             _add_unique(state_tags, "replace_dielectric")
+        if has_capacitor_replace:
+            _add_unique(state_tags, "replace_capacitor")
         if has_connected_source_event:
             _add_unique(state_tags, "source")
         return DomainDecision(
