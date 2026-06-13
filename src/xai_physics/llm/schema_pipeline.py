@@ -84,6 +84,20 @@ def solve_problem_with_llm(
     Real API clients should live behind SchemaLLMClient and be optional.
     """
     prompt_result = build_schema_prompt(problem, k=k)
+
+    if prompt_result.domain_decision.domain == "electrostatics":
+        schema = extract_electrostatics_schema_from_text(problem)
+        if schema is not None:
+            result = solve_schema(schema)
+            result.add_step("Prompt built", f"Domain: {prompt_result.domain_decision.domain}")
+            result.add_step("Deterministic electrostatics schema extracted", "Used narrow geometry/text extractor before LLM generation.")
+            return SchemaPipelineResult(
+                solve_result=result,
+                prompt_result=prompt_result,
+                raw_llm_output="__deterministic_electrostatics_text_extractor__",
+                schema=schema,
+            )
+
     raw_output = client.generate(prompt_result.prompt)
 
     deterministic_schema = extract_electrostatics_schema_from_text(problem)

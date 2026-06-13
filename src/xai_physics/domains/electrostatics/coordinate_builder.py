@@ -327,6 +327,21 @@ def _build_collinear(
             _quantity_to_si({"value": item["value"], "unit": item["unit"]}),
         )
 
+    # Special repair for schemas like order=[q,A,B] with distances q-A and q-B:
+    # sources are on opposite sides of the target, so A-B is not required.
+    if len(order) == 3:
+        center = order[0]
+        left = order[1]
+        right = order[2]
+        d_left = dist_map.get((center, left))
+        d_right = dist_map.get((center, right))
+        if d_left is not None and d_right is not None and (left, right) not in dist_map:
+            old = dict(coords)
+            coords[center] = coords.get(center, Vec2(0.0, 0.0))
+            coords[left] = Vec2(coords[center].x + d_left, coords[center].y)
+            coords[right] = Vec2(coords[center].x - d_right, coords[center].y)
+            return old != coords
+
     first = order[0]
     if first not in coords:
         coords[first] = Vec2(0.0, 0.0)

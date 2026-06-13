@@ -256,6 +256,24 @@ def _resultant_vector(vectors: dict[str, VectorInput]) -> Vec2:
     return total
 
 
+def _angle_from_resultant(vectors: dict[str, VectorInput], resultant_si: float) -> float:
+    vals = [item.value.norm() for item in vectors.values()]
+    if len(vals) != 2:
+        raise ValueError("resultant_angle requires exactly two vectors.")
+    f1, f2 = vals
+    if f1 <= 0 or f2 <= 0:
+        raise ValueError("Vector magnitudes must be positive for resultant_angle.")
+    cos_theta = (resultant_si * resultant_si - f1 * f1 - f2 * f2) / (2.0 * f1 * f2)
+    cos_theta = max(-1.0, min(1.0, cos_theta))
+    return math.degrees(math.acos(cos_theta))
+
+
+def _equal_charge_from_force(force_si: float, distance_si: float, k_eff: float) -> float:
+    if force_si < 0 or distance_si <= 0:
+        raise ValueError("Force must be nonnegative and distance must be positive.")
+    return math.sqrt(force_si * distance_si * distance_si / k_eff)
+
+
 def _format_value(value_si: float, si_unit: str, output_unit: Optional[str]) -> str:
     if output_unit is None:
         output_unit = si_unit
@@ -306,6 +324,18 @@ def _answer_query(
         result = _resultant_vector(vectors)
         return _answer_vector(result, output, "N", query.get("unit", "N"))
 
+    if qtype == "resultant_angle":
+        angle = _angle_from_resultant(vectors, _quantity_to_si(query["resultant"]))
+        return _format_value(angle, "degree", query.get("unit", "degree"))
+
+    if qtype == "coulomb_equal_charge":
+        charge = _equal_charge_from_force(
+            _quantity_to_si(query["force"]),
+            _quantity_to_si(query["distance"]),
+            k_eff=k_eff,
+        )
+        return _format_value(charge, "C", query.get("unit", "uC"))
+
     raise ValueError(f"Unsupported query type: {qtype}")
 
 
@@ -317,10 +347,10 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         validate_schema(schema)
 
         qtypes = [q.get("type") for q in schema.get("queries", [])]
-        vector_only = bool(qtypes) and all(qtype == "resultant_vector" for qtype in qtypes)
+        point_free = bool(qtypes) and all(qtype in {"resultant_vector", "resultant_angle", "coulomb_equal_charge"} for qtype in qtypes)
 
-        points: dict[str, Point] = {} if vector_only else _build_points(schema)
-        charges = {} if vector_only else _build_charges(schema)
+        points: dict[str, Point] = {} if point_free else _build_points(schema)
+        charges = {} if point_free else _build_charges(schema)
         vectors = _build_vectors(schema)
         k_eff = _k_eff(schema)
 

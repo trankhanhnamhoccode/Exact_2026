@@ -13,7 +13,12 @@ SUPPORTED_QUERIES = {
     "net_force",
     "electric_field",
     "resultant_vector",
+    "resultant_angle",
+    "coulomb_equal_charge",
 }
+
+POINT_FREE_QUERIES = {"resultant_vector", "resultant_angle", "coulomb_equal_charge"}
+VECTOR_QUERIES = {"resultant_vector", "resultant_angle"}
 
 SUPPORTED_OUTPUTS = {
     "magnitude",
@@ -467,6 +472,13 @@ def _validate_queries(
         elif qtype == "resultant_vector":
             if target not in {"vectors", "system", None} and target not in vector_ids:
                 _err(f"{path}.target must be 'vectors', 'system', omitted, or a vector id.")
+        elif qtype == "resultant_angle":
+            if target not in {"vectors", "system", None}:
+                _err(f"{path}.target must be 'vectors', 'system', or omitted for resultant_angle.")
+            _validate_quantity(query.get("resultant"), f"{path}.resultant")
+        elif qtype == "coulomb_equal_charge":
+            _validate_quantity(query.get("force"), f"{path}.force")
+            _validate_quantity(query.get("distance"), f"{path}.distance")
 
         output = query.get("output", "magnitude")
         if output not in SUPPORTED_OUTPUTS:
@@ -496,15 +508,16 @@ def validate_schema(schema: dict[str, Any]) -> None:
         _err(f"schema.domain must be 'electrostatics', got {domain!r}.")
 
     qtypes = _query_types(schema)
-    vector_only = all(qtype == "resultant_vector" for qtype in qtypes)
+    point_free = all(qtype in POINT_FREE_QUERIES for qtype in qtypes)
+    vector_required = all(qtype in VECTOR_QUERIES for qtype in qtypes)
 
-    point_ids = _validate_points(schema, required=not vector_only)
+    point_ids = _validate_points(schema, required=not point_free)
     if point_ids:
         _validate_geometry(schema, point_ids)
     elif schema.get("geometry"):
         _err("schema.geometry requires schema.points.")
 
     _validate_medium(schema)
-    charge_ids = _validate_charges(schema, point_ids, required=not vector_only)
-    vector_ids = _validate_vectors(schema, required=vector_only)
+    charge_ids = _validate_charges(schema, point_ids, required=not point_free)
+    vector_ids = _validate_vectors(schema, required=vector_required)
     _validate_queries(schema, point_ids, charge_ids, vector_ids)
