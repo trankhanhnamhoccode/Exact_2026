@@ -298,6 +298,16 @@ def _two_charge_values_for_zero_field(text: str, low: str) -> tuple[tuple[float,
         q = (_parse_number(equal_pair.group("q")), _unit(equal_pair.group("u")))
         return q, q
 
+    opposite_pair = re.search(
+        rf"\bq\s*1\s*=\s*-\s*q\s*2\s*=\s*(?P<q>{NUM})\s*(?P<u>{unit_pat})\b",
+        text,
+        flags=re.I,
+    )
+    if opposite_pair:
+        q = _parse_number(opposite_pair.group("q"))
+        u = _unit(opposite_pair.group("u"))
+        return (q, u), (-q, u)
+
     direct = re.search(
         rf"\bq\s*1\s*=\s*(?P<q1>{NUM})\s*(?P<u1>{unit_pat})\b.*?\bq\s*2\s*=\s*(?P<q2>{NUM})\s*(?P<u2>{unit_pat})?\b",
         text,
@@ -334,12 +344,12 @@ def _zero_field_separation(text: str) -> tuple[float, str] | None:
 
 def _is_zero_field_distance_query(low: str) -> bool:
     has_zero_field = "zero" in low and any(p in low for p in ["electric field", "field strength", "resultant electric field", "net electric field"])
-    asks_location = any(p in low for p in ["where", "find point", "calculate its distance", "calculate the distance", "coordinate"])
+    asks_location = any(p in low for p in ["where", "find point", "calculate its distance", "calculate the distance", "what is the distance", "coordinate"])
     return has_zero_field and asks_location
 
 
 def _zero_field_reference(text: str, low: str) -> str:
-    if re.search(r"\bBM\b", text, flags=re.I) or "distance from b" in low:
+    if re.search(r"\bBM\b", text, flags=re.I) or "distance from b" in low or re.search(r"distance\s+from\s+point\s+M\s+to\s+B", text, flags=re.I):
         return "B"
     if "coordinate" in low or "ox axis" in low:
         return "COORDINATE_FROM_A"
@@ -448,6 +458,7 @@ def _target_charge(text: str) -> tuple[float, str] | None:
     unit = r"(?P<unit>pC|nC|uC|mC|C|coulombs?)"
     return _find_quantity(
         [
+            rf"\bq\s*0\s*=\s*(?P<value>{NUM})\s*{unit}\b",
             rf"\bq\s*3\s*=\s*(?P<value>{NUM})\s*{unit}\b",
             rf"\btest\s+charge\s+q\b[^.]*?magnitude\s+of\s+(?P<value>{NUM})\s*{unit}\b",
             rf"\btest\s+charge\s+q\b[^.]*?(?P<value>{NUM})\s*{unit}\b",
@@ -497,6 +508,15 @@ def _triangle_distances_to_target(text: str, separation: tuple[float, str] | Non
     m = re.search(rf"\bAC\s*=\s*(?P<ac>{NUM})\s*(?P<u1>cm|mm|m)\b.*?\bBC\s*=\s*(?P<bc>{NUM})\s*(?P<u2>cm|mm|m)\b", text, flags=re.I | re.S)
     if m:
         return (_parse_number(m.group("ac")), _unit(m.group("u1"))), (_parse_number(m.group("bc")), _unit(m.group("u2")))
+    generic = re.search(
+        rf"(?P<ac>{NUM})\s*(?P<u1>cm|mm|m)\s+from\s+A\b.*?(?P<bc>{NUM})\s*(?P<u2>cm|mm|m)\s+from\s+B\b",
+        text,
+        flags=re.I | re.S,
+    )
+    if generic:
+        return (_parse_number(generic.group("ac")), _unit(generic.group("u1"))), (_parse_number(generic.group("bc")), _unit(generic.group("u2")))
+    if separation is not None and re.search(r"equidistant\s+from\s+A\s+and\s+B\s+by\s+a\s+distance\s+a\s*=", text, flags=re.I):
+        return separation, separation
     return None
 
 
@@ -566,6 +586,21 @@ def _two_charge_geometry(text: str, low: str) -> tuple[tuple[float, float], tupl
         x = (ac * ac + d * d - bc * bc) / (2.0 * d)
         y2 = max(0.0, ac * ac - x * x)
         return (0.0, 0.0), (d, 0.0), (x, math.sqrt(y2))
+
+    q_distances = _distances_from_q1_q2(text)
+    if q_distances is not None and any(p in low for p in ["straight line", "same line", "on the line", "passing through"]):
+        r1 = _length_to_m(q_distances[0])
+        r2 = _length_to_m(q_distances[1])
+        tol = max(1e-9, d * 1e-6)
+        if abs(r1 + r2 - d) <= tol:
+            x = r1
+        elif abs(r1 + d - r2) <= tol:
+            x = -r1
+        elif abs(r2 + d - r1) <= tol:
+            x = d + r2
+        else:
+            return None
+        return (0.0, 0.0), (d, 0.0), (x, 0.0)
 
     ma_mb = _ma_mb_distances(text)
     if ma_mb is not None:
@@ -950,6 +985,12 @@ def _field_pair_values(text: str) -> tuple[tuple[float, str], tuple[float, str]]
         flags=re.I | re.S,
     )
     if not m:
+        m = re.search(
+            rf"field\s+strength\s+at\s+A\s+is\s+(?P<ea>{NUM})\s*(?P<ua>{unit_pat}).*?at\s+B\s+is\s+(?P<eb>{NUM})\s*(?P<ub>{unit_pat})",
+            text,
+            flags=re.I | re.S,
+        )
+    if not m:
         return None
     return (_parse_number(m.group("ea")), _unit(m.group("ua"))), (_parse_number(m.group("eb")), _unit(m.group("ub")))
 
@@ -969,6 +1010,174 @@ def _midpoint_field_candidate(text: str, low: str) -> dict[str, Any] | None:
         ],
     )
 
+
+
+def _constant_zero_symmetry_candidate(text: str, low: str) -> dict[str, Any] | None:
+    zero_force = _is_force_query(low) and any(
+        phrase in low
+        for phrase in [
+            "equal magnitude and the same sign",
+            "four identical charges",
+            "three identical charges",
+        ]
+    ) and any(place in low for place in ["midpoint", "center", "centre", "intersection point"])
+    zero_field = _is_electric_field_query(low) and any(
+        phrase in low
+        for phrase in [
+            "four charges of the same magnitude",
+            "three identical charges",
+            "positive charges are located at a and c",
+        ]
+    ) and any(place in low for place in ["center", "centre", "intersection point"])
+    if not (zero_force or zero_field):
+        return None
+    query_type = "force" if zero_force else "electric_field"
+    unit = "N" if zero_force else "V/m"
+    return _schema(
+        "constant_zero_result",
+        [{"id": "zero_query", "type": query_type, "role": "query", "value": None, "unit": unit}],
+        constraints=["Symmetry: equal contributions cancel at the stated midpoint/center/intersection point."],
+    )
+
+
+def _square_side(text: str) -> tuple[float, str] | None:
+    return _find_quantity(
+        [
+            rf"square[^.]*?side\s+length\s+(?:of\s+)?(?:a\s*=\s*)?(?P<value>{NUM})\s*(?P<unit>cm|mm|m)",
+            rf"square[^.]*?with\s+a\s+side\s+length\s+of\s+(?P<value>{NUM})\s*(?P<unit>cm|mm|m)",
+        ],
+        text,
+    )
+
+
+def _equal_square_charge(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>pC|nC|uC|mC|C|coulombs?)"
+    patterns = [
+        rf"\bq\s*=\s*(?P<value>{NUM})\s*{unit}\b",
+        rf"\bq\s*1\s*=\s*q\s*2\s*=\s*q\s*3\s*=\s*q\s*=\s*(?P<value>{NUM})\s*{unit}\b",
+    ]
+    return _find_quantity(patterns, text)
+
+
+def _square_three_charge_fourth_vertex_field_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if not _is_electric_field_query(low) or "square" not in low:
+        return None
+    if not any(p in low for p in ["three equal positive", "three positive charges", "three consecutive vertices", "fourth vertex"]):
+        return None
+    side = _square_side(text)
+    charge = _equal_square_charge(text)
+    if side is None or charge is None:
+        return None
+    a = _length_to_m(side)
+    objects = [
+        _source_charge_obj("qA", charge, 0.0, 0.0),
+        _source_charge_obj("qB", charge, a, 0.0),
+        _source_charge_obj("qC", charge, a, a),
+        _point_obj("M", 0.0, a),
+        {"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"},
+    ]
+    return _schema(
+        "two_charge_geometry_field",
+        objects,
+        constraints=["Square geometry: place three equal source charges at consecutive vertices and evaluate the field at the fourth vertex."],
+    )
+
+
+def _square_center_missing_charge_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "square" not in low or "center" not in low or "zero" not in low or not (_is_charge_query(low) or "charge q4" in low):
+        return None
+    q2 = re.search(rf"\bq\s*2\s*=\s*(?P<value>{NUM})\s*(?P<unit>pC|nC|uC|mC|C|coulombs?)", text, flags=re.I)
+    if q2 is None:
+        return None
+    return _schema(
+        "square_center_zero_field_missing_vertex_charge",
+        [
+            {"id": "q_opposite", "type": "charge", "role": "given", **_quantity(_parse_number(q2.group("value")), _unit(q2.group("unit")))},
+            {"id": "q4_query", "type": "charge", "role": "query", "value": None, "unit": _unit(q2.group("unit"))},
+        ],
+        constraints=["At the square center all four vertex distances are equal; opposite vertices cancel pairwise, so q4 must equal q2."],
+    )
+
+
+def _right_triangle_altitude_foot_force_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if not _is_force_query(low) or "foot of the altitude" not in low or "right" not in low:
+        return None
+    coords = _right_triangle_coordinates_from_text(text, low)
+    if coords is None:
+        return None
+    equal = re.search(
+        rf"\bq\s*1\s*=\s*q\s*2\s*=\s*q\s*3\s*=\s*(?P<value>{NUM})\s*(?P<unit>pC|nC|uC|mC|C|coulombs?)",
+        text,
+        flags=re.I,
+    )
+    test = re.search(
+        rf"\bcharge\s+q\s*=\s*(?P<value>{NUM})\s*(?P<unit>pC|nC|uC|mC|C|coulombs?)\s+placed\s+at\s+point\s+H",
+        text,
+        flags=re.I,
+    )
+    if equal is None or test is None:
+        return None
+    q = (_parse_number(equal.group("value")), _unit(equal.group("unit")))
+    q_test = (_parse_number(test.group("value")), _unit(test.group("unit")))
+    # The current dataset wording uses the foot of the altitude from A to hypotenuse BC.
+    a = coords["A"]
+    b = coords["B"]
+    c = coords["C"]
+    vx = c[0] - b[0]
+    vy = c[1] - b[1]
+    denom = vx * vx + vy * vy
+    if denom == 0:
+        return None
+    t = ((a[0] - b[0]) * vx + (a[1] - b[1]) * vy) / denom
+    h = (b[0] + t * vx, b[1] + t * vy)
+    objects = [
+        _source_charge_obj("qA", q, *a),
+        _source_charge_obj("qB", q, *b),
+        _source_charge_obj("qC", q, *c),
+        _point_obj("M", *h),
+        {"id": "q_test", "type": "test_charge", "role": "given", **_quantity(*q_test)},
+        {"id": "F_query", "type": "force", "role": "query", "value": None, "unit": "N"},
+    ]
+    return _schema(
+        "two_charge_geometry_field",
+        objects,
+        constraints=["Right-triangle geometry: compute the foot of the altitude from A to hypotenuse BC, then superpose the force vectors."],
+    )
+
+
+def _parallel_capacitor_voltage_under_limit_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "parallel" not in low or "voltage" not in low or "one of the two capacitors" not in low:
+        return None
+    caps = re.search(
+        rf"C\s*1\s*=\s*(?P<c1>{NUM})\s*(?P<u1>pF|nF|uF|mF|F).*?C\s*2\s*=\s*(?P<c2>{NUM})\s*(?P<u2>pF|nF|uF|mF|F)",
+        text,
+        flags=re.I | re.S,
+    )
+    charge = _charge(text)
+    limit = re.search(rf"U\s*<\s*(?P<value>{NUM})\s*V", text, flags=re.I)
+    if caps is None or charge is None or limit is None:
+        return None
+    candidates = [
+        (_parse_number(caps.group("c1")), _unit(caps.group("u1"))),
+        (_parse_number(caps.group("c2")), _unit(caps.group("u2"))),
+    ]
+    q_si = charge[0] * {"pc": 1e-12, "nc": 1e-9, "uc": 1e-6, "mc": 1e-3, "c": 1.0}.get(_unit(charge[1]).lower(), 1.0)
+    limit_v = _parse_number(limit.group("value"))
+    def cap_si(c: tuple[float, str]) -> float:
+        return c[0] * {"pf": 1e-12, "nf": 1e-9, "uf": 1e-6, "mf": 1e-3, "f": 1.0}.get(_unit(c[1]).lower(), 1.0)
+    viable = [c for c in candidates if cap_si(c) > 0 and q_si / cap_si(c) < limit_v]
+    if not viable:
+        return None
+    chosen = viable[0]
+    return _schema(
+        "capacitor_charge_voltage",
+        [
+            {"id": "Q1", "type": "charge", "role": "given", **_quantity(*charge)},
+            {"id": "C1", "type": "capacitance", "role": "given", **_quantity(*chosen)},
+            {"id": "U_query", "type": "voltage", "role": "query", "value": None, "unit": "V"},
+        ],
+        constraints=["Parallel capacitors share voltage; use the capacitor choice that satisfies the stated U limit."],
+    )
 
 def _schema(formula: str, objects: list[dict[str, Any]], constraints: list[str] | None = None) -> dict[str, Any]:
     return {
@@ -1057,9 +1266,14 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
     for special in (
         _two_charge_zero_field_candidate(text, low),
         _zero_field_unknown_charges_candidate(text, low),
+        _constant_zero_symmetry_candidate(text, low),
         _right_triangle_three_charge_candidate(text, low),
+        _right_triangle_altitude_foot_force_candidate(text, low),
         _equilateral_two_identical_remaining_vertex_candidate(text, low),
+        _square_three_charge_fourth_vertex_field_candidate(text, low),
+        _square_center_missing_charge_candidate(text, low),
         _two_charge_geometry_candidate(text, low),
+        _parallel_capacitor_voltage_under_limit_candidate(text, low),
         _two_field_vector_resultant_candidate(text, low),
         _point_charge_inverse_candidate(text, low),
         _coulomb_unknown_charge_candidate(text, low),

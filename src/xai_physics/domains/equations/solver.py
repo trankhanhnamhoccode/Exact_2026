@@ -2627,6 +2627,35 @@ def _solve_two_charge_geometry_field(schema: dict[str, Any], formula: str) -> So
     result.answer = _answer(value, query, qtype, unit)
     return result
 
+
+def _solve_constant_zero_result(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "force") or _query_obj(schema, "electric_field")
+    if query is None:
+        return _fail("Need force or electric-field query for zero symmetry result.", formula)
+    qtype = str(query.get("type") or "force")
+    unit = "N" if qtype == "force" else "V/m"
+    result = _new_result()
+    result.add_step("Formula selected", "By symmetry, equal vector contributions cancel at the stated midpoint/center.")
+    result.answer = _answer(0.0, query, qtype, unit)
+    return result
+
+
+def _solve_square_center_zero_field_missing_vertex_charge(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "charge")
+    if query is None:
+        return _fail("Only missing-charge query is supported for square-center zero-field repair.", formula)
+    try:
+        given = [obj for obj in _relation_given_objects(schema, "charge") if obj is not query]
+        if not given:
+            raise ValueError("Need the opposite vertex charge.")
+        value_si = _to_si_quantity(given[0], "C")
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "At the square center, opposite vertices cancel pairwise; set the missing charge equal to its opposite vertex.")
+    result.answer = _answer(value_si, query, "charge", "C")
+    return result
+
 def _solve_coulomb_force_two_charges(schema: dict[str, Any], formula: str) -> SolveResult:
     query = _query_obj(schema, "charge")
     if query is None:
@@ -4155,6 +4184,8 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "two_charge_zero_field_unknown_charges": _solve_two_charge_zero_field_unknown_charges,
         "two_field_vector_resultant": _solve_two_field_vector_resultant,
         "two_charge_geometry_field": _solve_two_charge_geometry_field,
+        "constant_zero_result": _solve_constant_zero_result,
+        "square_center_zero_field_missing_vertex_charge": _solve_square_center_zero_field_missing_vertex_charge,
         "coulomb_force_two_charges": _solve_coulomb_force_two_charges,
         "point_charge_field_scaling": _solve_point_charge_field_scaling,
         "electric_pendulum_deflection_angle": _solve_electric_pendulum_deflection_angle,

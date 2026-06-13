@@ -96,7 +96,12 @@ def _try_equations_hybrid_selection(
     formula_candidates = generate_equations_candidate_schemas(problem)
     domain = prompt_result.domain_decision.domain
     if domain not in {"equations", "electrostatics"}:
-        return None
+        has_voltage_formula_candidate = any(
+            any(obj.get("role") == "query" and obj.get("type") == "voltage" for obj in schema.get("objects", []))
+            for schema in formula_candidates
+        )
+        if not has_voltage_formula_candidate:
+            return None
     if domain != "equations" and not formula_candidates:
         return None
 
