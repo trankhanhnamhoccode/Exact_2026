@@ -2356,23 +2356,36 @@ def _required_scalar(schema: dict[str, Any], obj_type: str | tuple[str, ...], un
 
 
 def _solve_point_charge_electric_field(schema: dict[str, Any], formula: str) -> SolveResult:
-    query = _query_obj(schema, "electric_field")
-    if query is None:
-        return _fail("Only electric field query is supported for E = k|q|/(eps_r*r^2).", formula)
+    e_query = _query_obj(schema, "electric_field")
+    q_query = _query_obj(schema, "charge")
 
     try:
-        q = _required_si(schema, "charge", "C")
         r = _required_si(schema, ("distance", "length", "radius"), "m")
         eps_r = _relative_permittivity(schema)
         if r == 0 or eps_r == 0:
             return _fail("Distance and relative permittivity must be non-zero.", formula)
-        value = K_COULOMB * abs(q) / (eps_r * r * r)
+
+        if e_query is not None:
+            q = _required_si(schema, "charge", "C")
+            value = K_COULOMB * abs(q) / (eps_r * r * r)
+            query = e_query
+            quantity_type = "electric_field"
+            default_unit = "V/m"
+        elif q_query is not None:
+            e = _required_si(schema, "electric_field", "V/m")
+            sign = float(q_query.get("sign", 1) or 1)
+            value = sign * e * eps_r * r * r / K_COULOMB
+            query = q_query
+            quantity_type = "charge"
+            default_unit = "C"
+        else:
+            return _fail("Only electric field or charge query is supported for E = k|q|/(eps_r*r^2).", formula)
     except Exception as exc:
         return _fail(str(exc), formula)
 
     result = _new_result()
     result.add_step("Formula selected", "Use point-charge electric field E = k|q|/(eps_r*r^2).")
-    result.answer = _answer(value, query, "electric_field", "V/m")
+    result.answer = _answer(value, query, quantity_type, default_unit)
     return result
 
 
@@ -2439,6 +2452,316 @@ def _solve_equilibrium_electric_field(schema: dict[str, Any], formula: str) -> S
 
     result = _new_result()
     result.add_step("Formula selected", "For vertical electric equilibrium, balance |q|E = mg.")
+    result.answer = _answer(value, query, "electric_field", "V/m")
+    return result
+
+
+def _relation_given_objects(schema: dict[str, Any], obj_type: str | tuple[str, ...]) -> list[dict[str, Any]]:
+    rel_objs = _relation_objects(schema, _first_formula_relation(schema))
+    objects = rel_objs if rel_objs else _iter_unique_objects(schema)
+    return [obj for obj in objects if _type_matches(obj, obj_type) and obj.get("role") in {"given", "constant"} and _has_value(obj)]
+
+
+def _solve_two_charge_zero_field_distance(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("distance", "position"))
+    if query is None:
+        return _fail("Only distance/position query is supported for two-charge zero-field points.", formula)
+
+    try:
+        charges = _relation_given_objects(schema, "charge")
+        if len(charges) < 2:
+            raise ValueError("Need two given point charges.")
+        q1 = _to_si_quantity(charges[0], "C")
+        q2 = _to_si_quantity(charges[1], "C")
+        if q1 == 0 or q2 == 0:
+            raise ValueError("Charges must be non-zero.")
+
+        d_obj = _given_obj(schema, ("distance", "length", "separation"))
+        if d_obj is None:
+            raise ValueError("Missing separation between the two charges.")
+        d = _to_si_quantity(d_obj, "m")
+        if d <= 0:
+            raise ValueError("Charge separation must be positive.")
+
+        a = abs(q1)
+        b = abs(q2)
+        same_sign = q1 * q2 > 0
+        if same_sign:
+            # Zero point lies between A and B.  Let x be AM, so
+            # |q1|/x^2 = |q2|/(d-x)^2 -> x/(d-x)=sqrt(|q1|/|q2|).
+            ratio = math.sqrt(a / b)
+            x_from_a = d * ratio / (1.0 + ratio)
+        else:
+            # Zero point lies outside the segment, on the side of the smaller
+            # magnitude charge.  x_from_a is a signed coordinate with A at 0
+            # and B at d.
+            if math.isclose(a, b, rel_tol=1e-12, abs_tol=0.0):
+                return _fail("Opposite equal charges have no finite zero-field point on the line.", formula)
+            if a < b:
+                ratio = math.sqrt(a / b)
+                outside_distance = d * ratio / (1.0 - ratio)
+                x_from_a = -outside_distance
+            else:
+                ratio = math.sqrt(b / a)
+                outside_distance = d * ratio / (1.0 - ratio)
+                x_from_a = d + outside_distance
+
+        reference = str(query.get("reference") or query.get("from") or "A").strip().upper()
+        if reference in {"B", "BM", "FROM_B"}:
+            value = abs(x_from_a - d)
+        else:
+            # A/AM and coordinate-from-A questions both use the signed coordinate
+            # when outside to the left; most benchmark distance questions are
+            # phrased as AM and remain positive because abs is requested by reference.
+            value = x_from_a if reference in {"COORDINATE", "COORDINATE_FROM_A", "OX"} else abs(x_from_a)
+
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step(
+        "Formula selected",
+        "Solve the 1D point where fields from two charges cancel: |q1|/r1^2 = |q2|/r2^2.",
+    )
+    result.answer = _answer(value, query, "distance", "m")
+    return result
+
+
+def _solve_two_field_vector_resultant(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "electric_field")
+    if query is None:
+        return _fail("Only electric field query is supported for vector resultant of two fields.", formula)
+    try:
+        charges = _relation_given_objects(schema, "charge")
+        if len(charges) < 2:
+            raise ValueError("Need two charges.")
+        distances = _relation_given_objects(schema, "distance")
+        if not distances:
+            raise ValueError("Need distance from charges to the target point.")
+        q1 = abs(_to_si_quantity(charges[0], "C"))
+        q2 = abs(_to_si_quantity(charges[1], "C"))
+        r1 = _to_si_quantity(distances[0], "m")
+        r2 = _to_si_quantity(distances[1], "m") if len(distances) > 1 else r1
+        angle_obj = _given_obj(schema, "angle")
+        if angle_obj is None:
+            raise ValueError("Need angle between the two field vectors.")
+        theta = _to_si_quantity(angle_obj, "rad")
+        if r1 == 0 or r2 == 0:
+            raise ValueError("Distances must be non-zero.")
+        e1 = K_COULOMB * q1 / (r1 * r1)
+        e2 = K_COULOMB * q2 / (r2 * r2)
+        value = math.sqrt(max(0.0, e1 * e1 + e2 * e2 + 2.0 * e1 * e2 * math.cos(theta)))
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Compute E1 and E2 from point-charge fields, then combine vectors by the law of cosines.")
+    result.answer = _answer(value, query, "electric_field", "V/m")
+    return result
+
+
+
+def _coord_si(obj: dict[str, Any], key: str) -> float:
+    unit = str(obj.get("coordinate_unit") or "m")
+    return _safe_numeric_expr(obj.get(key, 0.0)) * _unit_factor(unit)
+
+
+def _solve_two_charge_geometry_field(schema: dict[str, Any], formula: str) -> SolveResult:
+    field_query = _query_obj(schema, "electric_field")
+    force_query = _query_obj(schema, "force")
+    if field_query is None and force_query is None:
+        return _fail("Need electric-field or force query for two-charge geometry.", formula)
+
+    try:
+        rel_objs = _relation_objects(schema, _first_formula_relation(schema))
+        charges = [obj for obj in rel_objs if obj.get("type") == "charge" and obj.get("role") == "given" and obj.get("source")]
+        if len(charges) < 2:
+            raise ValueError("Need two source charges with coordinates.")
+        target = next((obj for obj in rel_objs if obj.get("type") == "point"), None)
+        if target is None:
+            raise ValueError("Need target point coordinates.")
+        mx = _coord_si(target, "x")
+        my = _coord_si(target, "y")
+
+        ex = 0.0
+        ey = 0.0
+        for charge in charges[:2]:
+            q = _to_si_quantity(charge, "C")
+            cx = _coord_si(charge, "x")
+            cy = _coord_si(charge, "y")
+            dx = mx - cx
+            dy = my - cy
+            r2 = dx * dx + dy * dy
+            if r2 == 0:
+                raise ValueError(f"Cannot compute field from {charge.get('id', 'charge')} at the target point.")
+            r = math.sqrt(r2)
+            # Match the existing electrostatics benchmark convention, which uses k = 9e9.
+            scale = 9.0e9 * q / (r2 * r)
+            ex += scale * dx
+            ey += scale * dy
+
+        eps_r = _relative_permittivity(schema)
+        if eps_r == 0:
+            raise ValueError("Relative permittivity must be non-zero.")
+        ex /= eps_r
+        ey /= eps_r
+        e_mag = math.sqrt(ex * ex + ey * ey)
+        if force_query is not None:
+            test = next((obj for obj in rel_objs if obj.get("type") in {"test_charge", "probe_charge"} and obj.get("role") == "given"), None)
+            if test is None:
+                raise ValueError("Need test charge for force query.")
+            value = abs(_to_si_quantity(test, "C")) * e_mag
+            query = force_query
+            qtype = "force"
+            unit = "N"
+        else:
+            value = e_mag
+            query = field_query
+            qtype = "electric_field"
+            unit = "V/m"
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Build coordinates for A, B, and target M/C, superpose electric-field vectors, and optionally multiply by a test charge.")
+    result.answer = _answer(value, query, qtype, unit)
+    return result
+
+def _solve_coulomb_force_two_charges(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "charge")
+    if query is None:
+        return _fail("Only unknown-charge query is supported for F = k|q1*q2|/r^2.", formula)
+
+    try:
+        known_charges = [obj for obj in _relation_given_objects(schema, "charge") if obj is not query]
+        if not known_charges:
+            raise ValueError("Missing known charge.")
+        known_q = abs(_to_si_quantity(known_charges[0], "C"))
+        force = abs(_required_si(schema, "force", "N"))
+        r = _required_si(schema, ("distance", "length", "radius"), "m")
+        if known_q == 0 or r == 0:
+            raise ValueError("Known charge and distance must be non-zero.")
+        value = force * r * r / (K_COULOMB * known_q)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use Coulomb force F = k|q1*q2|/r^2 to solve the unknown charge magnitude.")
+    result.answer = _answer(value, query, "charge", "C")
+    return result
+
+
+def _solve_two_charge_zero_field_unknown_charges(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "charge")
+    if query is None:
+        return _fail("Only q1/q2 query is supported for zero-field plus charge-sum problems.", formula)
+
+    try:
+        total = _required_si(schema, "charge_sum", "C")
+        distances = _relation_given_objects(schema, "distance")
+        if len(distances) < 2:
+            raise ValueError("Need distances from M to q1 and q2.")
+        r1 = _to_si_quantity(distances[0], "m")
+        r2 = _to_si_quantity(distances[1], "m")
+        if r1 == 0 or r2 == 0:
+            raise ValueError("Distances must be non-zero.")
+
+        # For the net field to be zero at M on the line, q1 and q2 must have
+        # opposite signs and |q2|/|q1| = r2^2/r1^2.  With q1+q2=S:
+        ratio = (r2 * r2) / (r1 * r1)
+        if math.isclose(ratio, 1.0, rel_tol=1e-12):
+            return _fail("Equal distance zero-field charge split is underdetermined.", formula)
+        q1 = total / (1.0 - ratio)
+        q2 = total - q1
+
+        qid = str(query.get("id") or query.get("symbol") or "").lower()
+        value = q2 if "2" in qid else q1
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use E=0 and q1+q2=S to solve the two unknown charges.")
+    result.answer = _answer(value, query, "charge", "C")
+    return result
+
+
+def _solve_point_charge_field_scaling(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("ratio", "electric_field_scaling_factor", "electric_field"))
+    if query is None:
+        return _fail("Only electric-field scaling query is supported.", formula)
+    try:
+        charge_factor = _required_scalar(schema, "charge_factor")
+        distance_factor = _required_scalar(schema, "distance_factor")
+        if distance_factor == 0:
+            raise ValueError("Distance factor must be non-zero.")
+        value = abs(charge_factor) / (distance_factor * distance_factor)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "Use point-charge scaling E' / E = |q'/q| / (r'/r)^2.")
+    result.answer = _answer(value, query, "ratio", "times")
+    return result
+
+
+def _solve_electric_pendulum_deflection_angle(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "angle")
+    if query is None:
+        return _fail("Only angle query is supported for charged-pendulum equilibrium.", formula)
+    try:
+        mass = _required_si(schema, "mass", "kg")
+        charge = abs(_required_si(schema, "charge", "C"))
+        field = _required_si(schema, "electric_field", "V/m")
+        g_obj = _given_obj(schema, ("acceleration", "gravitational_acceleration"))
+        g = _to_si_quantity(g_obj, "m/s2") if g_obj is not None else G_DEFAULT
+        if mass == 0 or g == 0:
+            raise ValueError("Mass and gravitational acceleration must be non-zero.")
+        value = math.atan(charge * field / (mass * g))
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "For a charged pendulum in a horizontal electric field, tan(theta)=|q|E/(mg).")
+    result.answer = _answer(value, query, "angle", "rad")
+    return result
+
+
+def _solve_dielectric_field_scaling(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "electric_field")
+    if query is None:
+        return _fail("Only electric field query is supported for dielectric scaling.", formula)
+    try:
+        field = _required_si(schema, "electric_field", "V/m")
+        eps_r = _relative_permittivity(schema)
+        if eps_r == 0:
+            raise ValueError("Relative permittivity must be non-zero.")
+        value = field / eps_r
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "For the same point charge and distance, a dielectric reduces E by eps_r.")
+    result.answer = _answer(value, query, "electric_field", "V/m")
+    return result
+
+
+def _solve_midpoint_field_from_two_field_values(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "electric_field")
+    if query is None:
+        return _fail("Only electric field query is supported for midpoint field interpolation.", formula)
+    try:
+        fields = _relation_given_objects(schema, "electric_field")
+        if len(fields) < 2:
+            raise ValueError("Need E_A and E_B.")
+        e_a = _to_si_quantity(fields[0], "V/m")
+        e_b = _to_si_quantity(fields[1], "V/m")
+        if e_a <= 0 or e_b <= 0:
+            raise ValueError("Field magnitudes must be positive.")
+        # For a point charge, 1/sqrt(E) is proportional to distance.  At the
+        # midpoint, r_M=(r_A+r_B)/2, hence 1/sqrt(E_M)=(1/2)(1/sqrt(E_A)+1/sqrt(E_B)).
+        inv_sqrt = 0.5 * (1.0 / math.sqrt(e_a) + 1.0 / math.sqrt(e_b))
+        value = 1.0 / (inv_sqrt * inv_sqrt)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "Use point-charge relation 1/sqrt(E) proportional to distance along a field line.")
     result.answer = _answer(value, query, "electric_field", "V/m")
     return result
 
@@ -3828,6 +4151,15 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "point_charge_electric_field": _solve_point_charge_electric_field,
         "electric_force_field": _solve_electric_force_field,
         "equilibrium_electric_field": _solve_equilibrium_electric_field,
+        "two_charge_zero_field_distance": _solve_two_charge_zero_field_distance,
+        "two_charge_zero_field_unknown_charges": _solve_two_charge_zero_field_unknown_charges,
+        "two_field_vector_resultant": _solve_two_field_vector_resultant,
+        "two_charge_geometry_field": _solve_two_charge_geometry_field,
+        "coulomb_force_two_charges": _solve_coulomb_force_two_charges,
+        "point_charge_field_scaling": _solve_point_charge_field_scaling,
+        "electric_pendulum_deflection_angle": _solve_electric_pendulum_deflection_angle,
+        "dielectric_field_scaling": _solve_dielectric_field_scaling,
+        "midpoint_field_from_two_field_values": _solve_midpoint_field_from_two_field_values,
         "infinite_wire_electric_field": _solve_infinite_wire_electric_field,
         "percentage_relative_error": _solve_percentage_relative_error,
         "absolute_error_from_actual": _solve_absolute_error_from_actual,

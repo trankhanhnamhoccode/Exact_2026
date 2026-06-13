@@ -1,0 +1,6 @@
+{"case_id": "DT042", "flag": "gold_wrong_high_confidence", "reason": "Duplicate of DT044 physics: E=9e5 V/m, r=0.4 m, eps_r=2.5 gives |q|≈4.0e-5 C and sign negative; expected -0.4e-6 C is off by 100x."}
+{"case_id": "DT098", "flag": "gold_wrong_high_confidence", "reason": "MA=1 cm, MB=3 cm, AB=2 cm implies collinear with A between M and B; net field is about 3.2e5 N/C, not 4.0e4 N/C."}
+{"case_id": "LD103", "flag": "gold_wrong_high_confidence", "reason": "Coulomb force vector sum using CA=10 cm, CB=8 cm, AB=9 cm gives about 1.48e-3 N; expected 1.480 N is off by 1000x."}
+{"case_id": "LD146", "flag": "gold_wrong_high_confidence", "reason": "Three equal charges 5e-6 C on equilateral triangle side 10 cm give sqrt(3) k q^2/a^2 ≈ 38.9 N; expected 3.89e-3 N is off by 1e4."}
+{"case_id": "LD294", "flag": "gold_wrong_high_confidence", "reason": "Symmetric dipole geometry with q_test=1e-8 C gives net force about 0.230 N; expected 0.230e-3 N is off by 1000x."}
+{"case_id": "LD303", "flag": "gold_wrong_high_confidence", "reason": "At the right-angle vertex of an isosceles right triangle, equal perpendicular fields combine by sqrt(2), giving about 5.64e6 V/m; expected 7.95e6 equals scalar 2E, not vector sum."}

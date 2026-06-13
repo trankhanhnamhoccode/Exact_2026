@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 
@@ -88,16 +88,17 @@ def test_fake_llm_pipeline_accepts_fenced_json():
     assert output.solve_result.answer == "0.045 J"
 
 
-def test_fake_llm_pipeline_returns_solve_failed_on_invalid_json():
+def test_fake_llm_pipeline_uses_hybrid_repair_on_invalid_json_when_possible():
     problem = "Calculate the energy stored in a capacitor with capacitance 100 uF and voltage 30 V."
     fake = FakeSchemaLLM("not json at all")
 
     output = solve_problem_with_llm(problem, fake, k=2)
 
-    assert output.schema is None
-    assert output.solve_result.status == "solve_failed"
+    assert output.schema is not None
+    assert output.solve_result.status == "ok"
     assert output.solve_result.domain == "equations"
-    assert "Could not" in output.solve_result.error
+    assert output.solve_result.answer == "0.045 J"
+    assert any(step.title == "Hybrid schema candidate selected" for step in output.solve_result.trace)
 
 
 def test_fake_llm_pipeline_can_route_capacitor_state_schema():
