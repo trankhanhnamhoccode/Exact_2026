@@ -195,6 +195,10 @@ def _is_electric_field_query(low: str) -> bool:
     return any(p in low for p in ["electric field", "field strength", "field intensity", "n/c", "v/m"])
 
 
+def _is_force_query(low: str) -> bool:
+    return "force" in low and any(p in low for p in ["calculate", "find", "determine", "what is", "magnitude"])
+
+
 def _line_charge_density(text: str) -> tuple[float, str] | None:
     unit = r"(?P<unit>pC\s*/\s*m|nC\s*/\s*m|uC\s*/\s*m|mC\s*/\s*m|C\s*/\s*m)"
     return _find_quantity(
@@ -220,6 +224,41 @@ def _gravity(text: str) -> tuple[float, str] | None:
     return _find_quantity(
         [
             rf"\bg\s*=\s*(?P<value>{NUM})\s*(?P<unit>m/s2|m/s\^2|m/s²)\b",
+        ],
+        text,
+    )
+
+
+
+
+def _force(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>uN|mN|N)"
+    return _find_quantity(
+        [
+            rf"\bF\s*=\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\bforce(?:\s+F)?(?:\s+of|\s+is|\s*=)?\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\bexperiences\s+(?:a\s+)?force\s+(?:F\s*=\s*)?(?P<value>{NUM})\s*{unit}\b",
+        ],
+        text,
+    )
+
+
+def _electric_field_given(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>N\s*/\s*C|V\s*/\s*m)"
+    return _find_quantity(
+        [
+            rf"\bE\s*=\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\belectric\s+field(?:\s+strength)?(?:\s+E)?(?:\s+of|\s+is|\s*=|\s+with\s+(?:a\s+)?magnitude\s+of)?\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\bfield\s+strength(?:\s+E)?(?:\s+of|\s+is|\s*=)?\s*(?P<value>{NUM})\s*{unit}\b",
+        ],
+        text,
+    )
+
+
+def _relative_permittivity_value(text: str) -> tuple[float, str] | None:
+    return _find_quantity(
+        [
+            rf"\b(?:dielectric\s+constant|relative\s+permittivity|epsilon|eps|ε)\s*(?:=|is|of)?\s*(?P<value>{NUM})\s*(?P<unit>)",
         ],
         text,
     )
@@ -331,18 +370,73 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
             )
         )
 
-    if q is not None and _distance(text) is not None and _is_electric_field_query(low) and any(p in low for p in ["point charge", "small sphere", "electric charge", "charge q", "charge of"]):
-        r = _distance(text)
+    force = _force(text)
+    field = _electric_field_given(text)
+    mass = _mass(text)
+    if force is not None and q is not None and _is_electric_field_query(low):
         candidates.append(
             _schema(
-                "point_charge_electric_field",
+                "electric_force_field",
                 [
+                    {"id": "F1", "type": "force", "role": "given", **_quantity(*force)},
                     {"id": "q1", "type": "charge", "role": "given", **_quantity(*q)},
-                    {"id": "r1", "type": "distance", "role": "given", **_quantity(*r)},
                     {"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"},
                 ],
             )
         )
+
+    if force is not None and field is not None and _is_charge_query(low):
+        candidates.append(
+            _schema(
+                "electric_force_field",
+                [
+                    {"id": "F1", "type": "force", "role": "given", **_quantity(*force)},
+                    {"id": "E1", "type": "electric_field", "role": "given", **_quantity(*field)},
+                    {"id": "q_query", "type": "charge", "role": "query", "value": None, "unit": "C"},
+                ],
+            )
+        )
+
+    if q is not None and field is not None and _is_force_query(low):
+        candidates.append(
+            _schema(
+                "electric_force_field",
+                [
+                    {"id": "q1", "type": "charge", "role": "given", **_quantity(*q)},
+                    {"id": "E1", "type": "electric_field", "role": "given", **_quantity(*field)},
+                    {"id": "F_query", "type": "force", "role": "query", "value": None, "unit": "N"},
+                ],
+            )
+        )
+
+    if mass is not None and field is not None and _is_charge_query(low) and "equilibrium" in low:
+        g = _gravity(text)
+        g_value = g[0] if g is not None else 10.0
+        m_value, m_unit = mass
+        mass_kg = m_value / 1000.0 if _unit(m_unit) == "g" else m_value
+        force_value = mass_kg * g_value
+        candidates.append(
+            _schema(
+                "electric_force_field",
+                [
+                    {"id": "F_gravity", "type": "force", "role": "given", "value": str(force_value), "unit": "N"},
+                    {"id": "E1", "type": "electric_field", "role": "given", **_quantity(*field)},
+                    {"id": "q_query", "type": "charge", "role": "query", "value": None, "unit": "C"},
+                ],
+            )
+        )
+
+    if q is not None and _distance(text) is not None and _is_electric_field_query(low) and any(p in low for p in ["point charge", "small sphere", "electric charge", "charge q", "charge of"]):
+        r = _distance(text)
+        objects = [
+            {"id": "q1", "type": "charge", "role": "given", **_quantity(*q)},
+            {"id": "r1", "type": "distance", "role": "given", **_quantity(*r)},
+        ]
+        eps_r = _relative_permittivity_value(text)
+        if eps_r is not None:
+            objects.append({"id": "eps_r", "type": "relative_permittivity", "role": "given", "value": str(eps_r[0]), "unit": ""})
+        objects.append({"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"})
+        candidates.append(_schema("point_charge_electric_field", objects))
 
     line_charge = _line_charge_density(text)
     if line_charge is not None and _distance(text) is not None and _is_electric_field_query(low) and any(p in low for p in ["wire", "linear charge density", "λ", "lambda"]):
@@ -358,7 +452,6 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
             )
         )
 
-    mass = _mass(text)
     if mass is not None and q is not None and _is_electric_field_query(low) and "equilibrium" in low:
         objects = [
             {"id": "m1", "type": "mass", "role": "given", **_quantity(*mass)},

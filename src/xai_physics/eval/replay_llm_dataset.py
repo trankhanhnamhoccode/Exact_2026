@@ -96,6 +96,12 @@ def _normalize_math_text(value: str | None) -> str:
 
 
 def _first_number(value: str | None) -> float | None:
+    raw = "" if value is None else str(value).strip().lower().translate(_SUPERSCRIPT_TRANS)
+    raw_compact = raw.replace("{", "").replace("}", "").replace(" ", "")
+    bare_power = re.fullmatch(r"10(?:\^|\*\*)?([-+]\d+)", raw_compact) or re.fullmatch(r"10(?:\^|\*\*)(\d+)", raw_compact)
+    if bare_power:
+        return 10 ** int(bare_power.group(1))
+
     text = _normalize_math_text(value)
     if not text:
         return None

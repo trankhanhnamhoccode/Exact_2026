@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import json
 
-from xai_physics.eval.replay_llm_dataset import run_replay_benchmark
+from xai_physics.eval.replay_llm_dataset import compare_answer, run_replay_benchmark
 from xai_physics.llm.replay_cache import ReplaySchemaLLM, load_replay_cache, parse_eval_log, write_replay_cache
 from xai_physics.llm.schema_pipeline import solve_problem_with_llm
 
@@ -105,3 +105,8 @@ def test_replay_compare_answer_handles_units_and_dirty_scientific_notation():
     assert compare_answer("0.005231928 uC", "5.23", expected_unit="nC") is True
     assert compare_answer("4.5e+06 V/m", "45.10^{5}", expected_unit="V/m") is True
     assert compare_answer({"Ex": "11 V/m", "magnitude": "245.909 V/m"}, "245.91", expected_unit="N/C") is True
+
+
+def test_compare_answer_handles_bare_power_of_ten_expected():
+    assert compare_answer("9986.16865811 V/m", "10^4", expected_unit="V/m") is True
+    assert compare_answer("1e-11 C", "10^{-11}", expected_unit="C") is True

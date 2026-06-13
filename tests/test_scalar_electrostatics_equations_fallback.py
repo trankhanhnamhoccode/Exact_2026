@@ -63,3 +63,30 @@ def test_equilibrium_field_formula_candidate():
     values = [float(str(solve_schema(schema).answer).split()[0]) for schema in candidates]
 
     assert any(value == pytest.approx(7500.0, rel=1e-9) for value in values)
+
+
+def test_electric_force_field_query_from_force_and_charge():
+    problem = "A charge q = 10^-7 C is placed in an electric field and experiences a force F = 3 mN. Calculate the electric field strength at the point where q is placed."
+
+    candidates = generate_equations_candidate_schemas(problem)
+    answers = [str(solve_schema(schema).answer) for schema in candidates]
+
+    assert any(float(answer.split()[0]) == pytest.approx(3.0e4) for answer in answers if answer and "V/m" in answer)
+
+
+def test_point_charge_field_uses_dielectric_constant():
+    problem = "A point charge q = 80 nC is fixed at O in oil. The dielectric constant of the oil is ε = 4. What is the electric field strength produced by q at point M, which is at a distance MO = 15 cm?"
+
+    candidates = generate_equations_candidate_schemas(problem)
+    answers = [str(solve_schema(schema).answer) for schema in candidates]
+
+    assert any(float(answer.split()[0]) == pytest.approx(7988.9349, rel=2e-3) for answer in answers if answer and "V/m" in answer)
+
+
+def test_equilibrium_charge_query_from_mass_and_field():
+    problem = "A dust particle carries a positive charge and has a mass of 10^-6 g. It is in equilibrium in a vertical electric field E = 1000 V / m. Calculate the charge of the dust particle."
+
+    candidates = generate_equations_candidate_schemas(problem)
+    answers = [str(solve_schema(schema).answer) for schema in candidates]
+
+    assert any(float(answer.split()[0]) == pytest.approx(1.0e-11) for answer in answers if answer and "C" in answer)
