@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
 from xai_physics.hybrid.formula_filler import Quantity, fill_formula_specs
 
-NUM = r"[-+]?(?:(?:\d+(?:\.\d+)?|\.\d+)(?:\s*(?:×|x|\*)\s*10\s*(?:\^|\*\*)?\s*[-+]?\d+|[eE][-+]?\d+)?|10\s*(?:\^|\*\*)\s*[-+]?\d+|10\s*[-+]\s*\d+)"
+NUM = r"[-+]?(?:10\s*(?:\^|\*\*)\s*[-+]?\d+|10\s*[-+]\s*\d+|(?:\d+(?:\.\d+)?|\.\d+)(?:\s*(?:×|x|\*)\s*10\s*(?:\^|\*\*)?\s*[-+]?\d+|[eE][-+]?\d+)?)"
 
 
 def _norm(text: str) -> str:
@@ -23,6 +24,7 @@ def _norm(text: str) -> str:
     subs = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
     text = text.translate(supers).translate(subs)
     text = text.replace("²", "2").replace("³", "3")
+    text = re.sub(r"(?P<coef>\d+)\.10\s*\^", r"\g<coef> x 10^", text)
     return text
 
 
@@ -287,6 +289,15 @@ def _relative_permittivity_value(text: str) -> tuple[float, str] | None:
 
 def _two_charge_values_for_zero_field(text: str, low: str) -> tuple[tuple[float, str], tuple[float, str]] | None:
     unit_pat = r"(?:pC|nC|uC|mC|C|coulombs?)"
+    equal_pair = re.search(
+        rf"\bq\s*1\s*=\s*q\s*2(?:\s*=\s*q\s*3)?\s*=\s*(?P<q>{NUM})\s*(?P<u>{unit_pat})\b",
+        text,
+        flags=re.I,
+    )
+    if equal_pair:
+        q = (_parse_number(equal_pair.group("q")), _unit(equal_pair.group("u")))
+        return q, q
+
     direct = re.search(
         rf"\bq\s*1\s*=\s*(?P<q1>{NUM})\s*(?P<u1>{unit_pat})\b.*?\bq\s*2\s*=\s*(?P<q2>{NUM})\s*(?P<u2>{unit_pat})?\b",
         text,
@@ -308,6 +319,10 @@ def _zero_field_separation(text: str) -> tuple[float, str] | None:
     return _find_quantity(
         [
             rf"\bseparated\s+by(?:\s+a\s+distance\s+of)?\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\bare\s+(?P<value>{NUM})\s*{unit}\s+apart\b",
+            rf"\bplaced\s+(?P<value>{NUM})\s*{unit}\s+apart\b",
+            rf"\bplaced\s+at\s+two\s+points\s+(?P<value>{NUM})\s*{unit}\s+apart\b",
+            rf"\bseparated\s+by\s+a\s+distance\s+a\s*=\s*(?P<value>{NUM})\s*{unit}\b",
             rf"\b(?:points\s+)?A\s+and\s+B\s+are\s*(?P<value>{NUM})\s*{unit}\s+apart\b",
             rf"\b(?:points\s+)?A\s+and\s+B\b[^.]*?\b(?P<value>{NUM})\s*{unit}\s+apart\b",
             rf"\bAB\s*=\s*(?P<value>{NUM})\s*{unit}\b",
@@ -412,6 +427,227 @@ def _two_field_vector_resultant_candidate(text: str, low: str) -> dict[str, Any]
         constraints=["Compute each field magnitude and combine by the angle between the field vectors."],
     )
 
+
+
+def _length_to_m(length: tuple[float, str]) -> float:
+    value, unit = length
+    unit = _unit(unit).lower()
+    factors = {"m": 1.0, "cm": 1e-2, "mm": 1e-3}
+    return value * factors.get(unit, 1.0)
+
+
+def _point_obj(obj_id: str, x_m: float, y_m: float, *, role: str = "given") -> dict[str, Any]:
+    return {"id": obj_id, "type": "point", "role": role, "value": "0", "unit": "", "x": str(x_m), "y": str(y_m), "coordinate_unit": "m"}
+
+
+def _source_charge_obj(obj_id: str, charge: tuple[float, str], x_m: float, y_m: float) -> dict[str, Any]:
+    return {"id": obj_id, "type": "charge", "role": "given", "source": True, "x": str(x_m), "y": str(y_m), "coordinate_unit": "m", **_quantity(*charge)}
+
+
+def _target_charge(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>pC|nC|uC|mC|C|coulombs?)"
+    return _find_quantity(
+        [
+            rf"\bq\s*3\s*=\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\btest\s+charge\s+q\b[^.]*?magnitude\s+of\s+(?P<value>{NUM})\s*{unit}\b",
+            rf"\btest\s+charge\s+q\b[^.]*?(?P<value>{NUM})\s*{unit}\b",
+        ],
+        text,
+    )
+
+
+def _distance_from_midpoint(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>cm|mm|m)"
+    return _find_quantity(
+        [
+            rf"\bat\s+a\s+distance\s+of\s+(?P<value>{NUM})\s*{unit}\s+from\s+AB\b",
+            rf"\b(?P<value>{NUM})\s*{unit}\s+away\s+from\s+AB\b",
+            rf"\b(?P<value>{NUM})\s*{unit}\s+away\s+from\s+(?:the\s+)?midpoint\b",
+            rf"\bat\s+a\s+distance\s+of\s+(?P<value>{NUM})\s*{unit}\s+from\s+(?:its\s+|the\s+)?midpoint\b",
+            rf"\bis\s+(?P<value>{NUM})\s*{unit}\s+from\s+(?:its\s+|the\s+)?midpoint\b",
+            rf"\blocated\s+(?P<value>{NUM})\s*{unit}\s+from\s+(?:its\s+|the\s+)?midpoint\b",
+            rf"\b(?P<value>{NUM})\s*{unit}\s+from\s+(?:its\s+|the\s+)?midpoint\b",
+            rf"\b(?P<value>{NUM})\s*{unit}\s+from\s+(?:its\s+|the\s+)?midpoint\s+of\s+(?:AB|this\s+segment)\b",
+        ],
+        text,
+    )
+
+
+def _distance_from_each_charge(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>cm|mm|m)"
+    return _find_quantity(
+        [
+            rf"\b(?P<value>{NUM})\s*{unit}\s+(?:away\s+)?from\s+each\s+charge\b",
+            rf"\b(?P<value>{NUM})\s*{unit}\s+(?:away\s+)?from\s+each\s+of\s+the\s+two\s+charges\b",
+            rf"\bequidistant\s+from\s+(?:both|the\s+two)\s+charges\s+(?:by|at)\s+(?P<value>{NUM})\s*{unit}\b",
+            rf"\bequidistant\s+from\s+(?:A\s+and\s+B|both\s+charges)\s+by\s+(?P<value>{NUM})\s*{unit}\b",
+        ],
+        text,
+    )
+
+
+def _triangle_distances_to_target(text: str, separation: tuple[float, str] | None = None) -> tuple[tuple[float, str], tuple[float, str]] | None:
+    unit = r"(?P<unit>cm|mm|m)"
+    if separation is not None and re.search(r"equidistant\s+from\s+A\s+and\s+B\s+by\s+a\s+distance\s+equal\s+to\s+a", text, flags=re.I):
+        return separation, separation
+    same = re.search(rf"\bAC\s*=\s*BC\s*=\s*(?P<value>{NUM})\s*{unit}\b", text, flags=re.I)
+    if same:
+        dist = (_parse_number(same.group("value")), _unit(same.group("unit")))
+        return dist, dist
+    m = re.search(rf"\bAC\s*=\s*(?P<ac>{NUM})\s*(?P<u1>cm|mm|m)\b.*?\bBC\s*=\s*(?P<bc>{NUM})\s*(?P<u2>cm|mm|m)\b", text, flags=re.I | re.S)
+    if m:
+        return (_parse_number(m.group("ac")), _unit(m.group("u1"))), (_parse_number(m.group("bc")), _unit(m.group("u2")))
+    return None
+
+
+def _ma_mb_distances(text: str) -> tuple[tuple[float, str], tuple[float, str]] | None:
+    m = re.search(rf"\bMA\s*=\s*(?P<ma>{NUM})\s*(?P<u1>cm|mm|m)\b.*?\bMB\s*=\s*(?P<mb>{NUM})\s*(?P<u2>cm|mm|m)\b", text, flags=re.I | re.S)
+    if not m:
+        return None
+    return (_parse_number(m.group("ma")), _unit(m.group("u1"))), (_parse_number(m.group("mb")), _unit(m.group("u2")))
+
+
+def _collinear_distance_from_a(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>cm|mm|m)"
+    return _find_quantity(
+        [
+            rf"\bM\s+is\s+(?P<value>{NUM})\s*{unit}\s+from\s+A\b",
+            rf"\bM\s+is\s+located\s+(?P<value>{NUM})\s*{unit}\s+from\s+A\b",
+            rf"\bis\s+(?P<value>{NUM})\s*{unit}\s+from\s+A\b",
+            rf"\bis\s+(?P<value>{NUM})\s*{unit}\s+to\s+the\s+right\s+of\s+A\b",
+            rf"\bis\s+located\s+(?P<value>{NUM})\s*{unit}\s+to\s+the\s+right\s+of\s+A\b",
+        ],
+        text,
+    )
+
+
+def _collinear_left_of_q1(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>cm|mm|m)"
+    return _find_quantity(
+        [
+            rf"\b(?P<value>{NUM})\s*{unit}\s+to\s+the\s+left\s+of\s+(?:charge\s+)?q\s*1\b",
+            rf"\b(?P<value>{NUM})\s*{unit}\s+to\s+the\s+left\s+of\s+A\b",
+        ],
+        text,
+    )
+
+
+def _two_charge_geometry(text: str, low: str) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]] | None:
+    separation = _zero_field_separation(text)
+
+    # Explicit angle at M: build rays from M to q1 and q2 and let signed charges
+    # determine the actual field-vector directions. This handles opposite signs,
+    # where the field-vector angle is supplementary to the geometric angle.
+    angle = _field_vector_angle(text, low)
+    common = _common_distance_to_m(text)
+    if common is None:
+        common = _find_quantity(
+            [
+                rf"\bEach\s+point\s+is\s+(?P<value>{NUM})\s*(?P<unit>cm|mm|m)\s+away\s+from\s+M\b",
+                rf"\bequidistant\s+from\s+point\s+M\b.*?\bEach\s+point\s+is\s+(?P<value>{NUM})\s*(?P<unit>cm|mm|m)\s+away\s+from\s+M\b",
+            ],
+            text,
+        )
+    if angle is not None and common is not None and any(p in low for p in ["angle between", "angle formed", "form an angle", "perpendicular"]):
+        r = _length_to_m(common)
+        theta = _parse_number(str(angle[0])) * math.pi / 180.0 if angle[1].lower().startswith("degree") else angle[0]
+        return (r, 0.0), (r * math.cos(theta), r * math.sin(theta)), (0.0, 0.0)
+
+    if separation is None:
+        return None
+    d = _length_to_m(separation)
+
+    tri = _triangle_distances_to_target(text, separation)
+    if tri is not None:
+        ac = _length_to_m(tri[0])
+        bc = _length_to_m(tri[1])
+        if d == 0:
+            return None
+        x = (ac * ac + d * d - bc * bc) / (2.0 * d)
+        y2 = max(0.0, ac * ac - x * x)
+        return (0.0, 0.0), (d, 0.0), (x, math.sqrt(y2))
+
+    ma_mb = _ma_mb_distances(text)
+    if ma_mb is not None:
+        ma = _length_to_m(ma_mb[0])
+        mb = _length_to_m(ma_mb[1])
+        tol = max(1e-9, d * 1e-6)
+        if abs(ma + mb - d) <= tol:
+            x = ma
+        elif abs(ma + d - mb) <= tol:
+            x = -ma
+        elif abs(mb + d - ma) <= tol:
+            x = d + mb
+        else:
+            return None
+        return (0.0, 0.0), (d, 0.0), (x, 0.0)
+
+    if "perpendicular bisector" in low:
+        h_len = _distance_from_midpoint(text)
+        if h_len is not None:
+            h = _length_to_m(h_len)
+            return (-d / 2.0, 0.0), (d / 2.0, 0.0), (0.0, h)
+        each_len = _distance_from_each_charge(text)
+        if each_len is not None:
+            r = _length_to_m(each_len)
+            h = math.sqrt(max(0.0, r * r - (d / 2.0) * (d / 2.0)))
+            return (-d / 2.0, 0.0), (d / 2.0, 0.0), (0.0, h)
+
+    if "on the line" in low or "outside the segment" in low or "ma =" in low or "mb =" in low:
+        left = _collinear_left_of_q1(text)
+        if left is not None:
+            return (0.0, 0.0), (d, 0.0), (-_length_to_m(left), 0.0)
+        from_a = _collinear_distance_from_a(text)
+        if from_a is not None:
+            dist = _length_to_m(from_a)
+            right_hint = any(p in low for p in ["to the right", "right side", "right of a", "right of charge"])
+            outside_hint = "outside" in low or "left" in low or "right" in low
+            if right_hint:
+                x = dist
+            elif outside_hint:
+                x = -dist
+            else:
+                x = dist
+            return (0.0, 0.0), (d, 0.0), (x, 0.0)
+
+    if "midpoint" in low:
+        return (0.0, 0.0), (d, 0.0), (d / 2.0, 0.0)
+
+    return None
+
+
+def _two_charge_geometry_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if not (_is_electric_field_query(low) or _is_force_query(low)):
+        return None
+    charges = _two_charge_values_for_zero_field(text, low)
+    geom = _two_charge_geometry(text, low)
+    if charges is None or geom is None:
+        return None
+
+    q1, q2 = charges
+    a, b, target = geom
+    force_query = _is_force_query(low)
+    qtest = _target_charge(text) if force_query else None
+    query: dict[str, Any]
+    objects: list[dict[str, Any]] = [
+        _source_charge_obj("q1", q1, *a),
+        _source_charge_obj("q2", q2, *b),
+        _point_obj("M", *target),
+    ]
+    eps = _relative_permittivity_value(text)
+    if eps is not None:
+        objects.append({"id": "eps_r", "type": "relative_permittivity", "role": "constant", **_quantity(*eps)})
+    if force_query and qtest is not None:
+        objects.append({"id": "q_test", "type": "test_charge", "role": "given", **_quantity(*qtest)})
+        query = {"id": "F_query", "type": "force", "role": "query", "value": None, "unit": "N"}
+    else:
+        query = {"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"}
+    objects.append(query)
+    return _schema(
+        "two_charge_geometry_field",
+        objects,
+        constraints=["Build a 2D A-B-target geometry and superpose signed electric-field vectors from q1 and q2."],
+    )
 
 def _point_charge_inverse_candidate(text: str, low: str) -> dict[str, Any] | None:
     if not _is_charge_query(low):
@@ -670,6 +906,7 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
     for special in (
         _two_charge_zero_field_candidate(text, low),
         _zero_field_unknown_charges_candidate(text, low),
+        _two_charge_geometry_candidate(text, low),
         _two_field_vector_resultant_candidate(text, low),
         _point_charge_inverse_candidate(text, low),
         _coulomb_unknown_charge_candidate(text, low),

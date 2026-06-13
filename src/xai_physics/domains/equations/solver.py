@@ -2560,6 +2560,73 @@ def _solve_two_field_vector_resultant(schema: dict[str, Any], formula: str) -> S
     return result
 
 
+
+def _coord_si(obj: dict[str, Any], key: str) -> float:
+    unit = str(obj.get("coordinate_unit") or "m")
+    return _safe_numeric_expr(obj.get(key, 0.0)) * _unit_factor(unit)
+
+
+def _solve_two_charge_geometry_field(schema: dict[str, Any], formula: str) -> SolveResult:
+    field_query = _query_obj(schema, "electric_field")
+    force_query = _query_obj(schema, "force")
+    if field_query is None and force_query is None:
+        return _fail("Need electric-field or force query for two-charge geometry.", formula)
+
+    try:
+        rel_objs = _relation_objects(schema, _first_formula_relation(schema))
+        charges = [obj for obj in rel_objs if obj.get("type") == "charge" and obj.get("role") == "given" and obj.get("source")]
+        if len(charges) < 2:
+            raise ValueError("Need two source charges with coordinates.")
+        target = next((obj for obj in rel_objs if obj.get("type") == "point"), None)
+        if target is None:
+            raise ValueError("Need target point coordinates.")
+        mx = _coord_si(target, "x")
+        my = _coord_si(target, "y")
+
+        ex = 0.0
+        ey = 0.0
+        for charge in charges[:2]:
+            q = _to_si_quantity(charge, "C")
+            cx = _coord_si(charge, "x")
+            cy = _coord_si(charge, "y")
+            dx = mx - cx
+            dy = my - cy
+            r2 = dx * dx + dy * dy
+            if r2 == 0:
+                raise ValueError(f"Cannot compute field from {charge.get('id', 'charge')} at the target point.")
+            r = math.sqrt(r2)
+            # Match the existing electrostatics benchmark convention, which uses k = 9e9.
+            scale = 9.0e9 * q / (r2 * r)
+            ex += scale * dx
+            ey += scale * dy
+
+        eps_r = _relative_permittivity(schema)
+        if eps_r == 0:
+            raise ValueError("Relative permittivity must be non-zero.")
+        ex /= eps_r
+        ey /= eps_r
+        e_mag = math.sqrt(ex * ex + ey * ey)
+        if force_query is not None:
+            test = next((obj for obj in rel_objs if obj.get("type") in {"test_charge", "probe_charge"} and obj.get("role") == "given"), None)
+            if test is None:
+                raise ValueError("Need test charge for force query.")
+            value = abs(_to_si_quantity(test, "C")) * e_mag
+            query = force_query
+            qtype = "force"
+            unit = "N"
+        else:
+            value = e_mag
+            query = field_query
+            qtype = "electric_field"
+            unit = "V/m"
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Build coordinates for A, B, and target M/C, superpose electric-field vectors, and optionally multiply by a test charge.")
+    result.answer = _answer(value, query, qtype, unit)
+    return result
+
 def _solve_coulomb_force_two_charges(schema: dict[str, Any], formula: str) -> SolveResult:
     query = _query_obj(schema, "charge")
     if query is None:
@@ -4087,6 +4154,7 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "two_charge_zero_field_distance": _solve_two_charge_zero_field_distance,
         "two_charge_zero_field_unknown_charges": _solve_two_charge_zero_field_unknown_charges,
         "two_field_vector_resultant": _solve_two_field_vector_resultant,
+        "two_charge_geometry_field": _solve_two_charge_geometry_field,
         "coulomb_force_two_charges": _solve_coulomb_force_two_charges,
         "point_charge_field_scaling": _solve_point_charge_field_scaling,
         "electric_pendulum_deflection_angle": _solve_electric_pendulum_deflection_angle,

@@ -114,6 +114,12 @@ def _try_equations_hybrid_selection(
         return None
 
     result = selected.solve_result
+    if (
+        raw_llm_output == "__deterministic_electrostatics_text_extractor__"
+        and prompt_result.domain_decision.domain == "electrostatics"
+        and result.status == "ok"
+    ):
+        result.status = "solved"
     result.add_step("Prompt built", f"Domain: {prompt_result.domain_decision.domain}")
     result.add_step(
         "Hybrid schema candidate selected",
