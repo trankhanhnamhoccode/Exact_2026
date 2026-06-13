@@ -1372,22 +1372,214 @@ def _solve_power_current_resistance(schema: dict[str, Any], formula: str) -> Sol
     return result
 
 
+
+def _given_si_or_none(schema: dict[str, Any], obj_type: str | tuple[str, ...], unit: str) -> float | None:
+    obj = _given_obj(schema, obj_type)
+    if obj is None:
+        return None
+    return _to_si_quantity(obj, unit)
+
+
+def _reactances_from_schema(schema: dict[str, Any]) -> tuple[float, float]:
+    """Return (XL, XC), computing them from L/C/f when direct reactances are absent."""
+    xl = _given_si_or_none(schema, "inductive_reactance", "ohm")
+    xc = _given_si_or_none(schema, "capacitive_reactance", "ohm")
+
+    f = _given_si_or_none(schema, "frequency", "Hz")
+    omega = _given_si_or_none(schema, "angular_frequency", "rad/s")
+    if omega is None and f is not None:
+        omega = 2 * math.pi * f
+
+    if xl is None:
+        l = _given_si_or_none(schema, "inductance", "H")
+        if l is not None and omega is not None:
+            xl = omega * l
+
+    if xc is None:
+        c = _given_si_or_none(schema, "capacitance", "F")
+        if c is not None and omega is not None:
+            if omega == 0 or c == 0:
+                raise ValueError("Frequency and capacitance must be non-zero for capacitive reactance.")
+            xc = 1.0 / (omega * c)
+
+    if xl is None:
+        raise ValueError("Missing inductive reactance or inductance+frequency.")
+    if xc is None:
+        raise ValueError("Missing capacitive reactance or capacitance+frequency.")
+    return xl, xc
+
+
+def _solve_ac_inductive_reactance(schema: dict[str, Any], formula: str) -> SolveResult:
+    x_query = _query_obj(schema, "inductive_reactance") or _query_obj(schema, "impedance")
+    l_query = _query_obj(schema, "inductance")
+    f_query = _query_obj(schema, "frequency")
+    omega_query = _query_obj(schema, "angular_frequency")
+
+    try:
+        if x_query is not None:
+            l = _required_si(schema, "inductance", "H")
+            omega = _given_si_or_none(schema, "angular_frequency", "rad/s")
+            if omega is None:
+                f = _required_si(schema, "frequency", "Hz")
+                omega = 2 * math.pi * f
+            value = omega * l
+            query = x_query
+            quantity_type = "inductive_reactance"
+            default_unit = "ohm"
+        elif l_query is not None:
+            x = _required_si(schema, "inductive_reactance", "ohm")
+            omega = _given_si_or_none(schema, "angular_frequency", "rad/s")
+            if omega is None:
+                f = _required_si(schema, "frequency", "Hz")
+                omega = 2 * math.pi * f
+            if omega == 0:
+                return _fail("Angular frequency must be non-zero when solving inductance.", formula)
+            value = x / omega
+            query = l_query
+            quantity_type = "inductance"
+            default_unit = "H"
+        elif f_query is not None or omega_query is not None:
+            x = _required_si(schema, "inductive_reactance", "ohm")
+            l = _required_si(schema, "inductance", "H")
+            if l == 0:
+                return _fail("Inductance must be non-zero when solving frequency.", formula)
+            omega = x / l
+            if omega_query is not None:
+                value = omega
+                query = omega_query
+                quantity_type = "angular_frequency"
+                default_unit = "rad/s"
+            else:
+                value = omega / (2 * math.pi)
+                query = f_query
+                quantity_type = "frequency"
+                default_unit = "Hz"
+        else:
+            return _fail("No supported query object for XL = 2*pi*f*L.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use inductive reactance XL = omega*L = 2*pi*f*L.")
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
+def _solve_ac_capacitive_reactance(schema: dict[str, Any], formula: str) -> SolveResult:
+    x_query = _query_obj(schema, "capacitive_reactance") or _query_obj(schema, "impedance")
+    c_query = _query_obj(schema, "capacitance")
+    f_query = _query_obj(schema, "frequency")
+    omega_query = _query_obj(schema, "angular_frequency")
+
+    try:
+        if x_query is not None:
+            c = _required_si(schema, "capacitance", "F")
+            omega = _given_si_or_none(schema, "angular_frequency", "rad/s")
+            if omega is None:
+                f = _required_si(schema, "frequency", "Hz")
+                omega = 2 * math.pi * f
+            if omega == 0 or c == 0:
+                return _fail("Angular frequency and capacitance must be non-zero.", formula)
+            value = 1.0 / (omega * c)
+            query = x_query
+            quantity_type = "capacitive_reactance"
+            default_unit = "ohm"
+        elif c_query is not None:
+            x = _required_si(schema, "capacitive_reactance", "ohm")
+            omega = _given_si_or_none(schema, "angular_frequency", "rad/s")
+            if omega is None:
+                f = _required_si(schema, "frequency", "Hz")
+                omega = 2 * math.pi * f
+            if omega == 0 or x == 0:
+                return _fail("Angular frequency and reactance must be non-zero when solving capacitance.", formula)
+            value = 1.0 / (omega * x)
+            query = c_query
+            quantity_type = "capacitance"
+            default_unit = "F"
+        elif f_query is not None or omega_query is not None:
+            x = _required_si(schema, "capacitive_reactance", "ohm")
+            c = _required_si(schema, "capacitance", "F")
+            if x == 0 or c == 0:
+                return _fail("Reactance and capacitance must be non-zero when solving frequency.", formula)
+            omega = 1.0 / (x * c)
+            if omega_query is not None:
+                value = omega
+                query = omega_query
+                quantity_type = "angular_frequency"
+                default_unit = "rad/s"
+            else:
+                value = omega / (2 * math.pi)
+                query = f_query
+                quantity_type = "frequency"
+                default_unit = "Hz"
+        else:
+            return _fail("No supported query object for XC = 1/(2*pi*f*C).", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use capacitive reactance XC = 1/(omega*C) = 1/(2*pi*f*C).")
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
+def _solve_rlc_power_voltage_impedance_resistance(schema: dict[str, Any], formula: str) -> SolveResult:
+    p_query = _query_obj(schema, "power")
+    if p_query is None:
+        return _fail("Only power query is supported for P = U^2*R/Z^2.", formula)
+
+    try:
+        u = _required_si(schema, "voltage", "V")
+        r = _required_si(schema, "resistance", "ohm")
+        z = _required_si(schema, "impedance", "ohm")
+        if z == 0:
+            return _fail("Impedance must be non-zero when solving power.", formula)
+        value = u * u * r / (z * z)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use RLC real power P = I^2 R = (U/Z)^2 R.")
+    result.answer = _answer(value, p_query, "power", "W")
+    return result
+
+
+def _solve_rlc_characteristic_from_reactance(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("circuit_characteristic", "characteristic", "text", "string")) or _query_obj(schema)
+    try:
+        xl, xc = _reactances_from_schema(schema)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    tol = max(1e-9, 1e-6 * max(abs(xl), abs(xc), 1.0))
+    if abs(xl - xc) <= tol:
+        answer = "resonant"
+    elif xl > xc:
+        answer = "inductive"
+    else:
+        answer = "capacitive"
+
+    result = _new_result()
+    result.add_step("Formula selected", "Compare XL and XC: inductive if XL > XC, capacitive if XL < XC, resonant if equal.")
+    result.answer = answer
+    return result
+
+
 def _solve_ac_impedance(schema: dict[str, Any], formula: str) -> SolveResult:
     query = _query_obj(schema, "impedance")
     if query is None:
         return _fail("Only impedance query is supported for Z = sqrt(R^2 + (XL-XC)^2).", formula)
 
     try:
-        r = _required_si(schema, "resistance", "?")
-        xl = _required_si(schema, "inductive_reactance", "?")
-        xc = _required_si(schema, "capacitive_reactance", "?")
+        r = _required_si(schema, "resistance", "ohm")
+        xl, xc = _reactances_from_schema(schema)
         value = math.sqrt(r * r + (xl - xc) * (xl - xc))
     except Exception as exc:
         return _fail(str(exc), formula)
 
     result = _new_result()
-    result.add_step("Formula selected", "Use series RLC impedance Z = sqrt(R^2 + (XL-XC)^2).")
-    result.answer = _answer(value, query, "impedance", "?")
+    result.add_step("Formula selected", "Use series RLC impedance Z = sqrt(R^2 + (XL-XC)^2), computing XL/XC from f,L,C if needed.")
+    result.answer = _answer(value, query, "impedance", "ohm")
     return result
 
 
@@ -2385,6 +2577,9 @@ def _compatible_formula_names_from_objects(schema: dict[str, Any]) -> list[str]:
     has_l = "inductance" in types
     has_f = "frequency" in types
     has_omega = "angular_frequency" in types
+    has_xl = "inductive_reactance" in types
+    has_xc = "capacitive_reactance" in types
+    has_z = "impedance" in types
 
     # Capacitor core relations.
     if has_c and has_u:
@@ -2418,6 +2613,18 @@ def _compatible_formula_names_from_objects(schema: dict[str, Any]) -> list[str]:
         add("capacitor_energy_charge_scaling_constant_capacitance")
 
     # RLC / LC.
+    if has_l and (has_f or has_omega or _has_query_type(schema, "inductive_reactance")):
+        add("ac_inductive_reactance")
+    if has_c and (has_f or has_omega or _has_query_type(schema, "capacitive_reactance")):
+        add("ac_capacitive_reactance")
+    if has_r and ((has_xl and has_xc) or (has_l and has_c and (has_f or has_omega))):
+        add("ac_impedance")
+    if has_u and has_z:
+        add("impedance_voltage_current")
+    if has_p and has_u and has_z and has_r:
+        add("rlc_power_voltage_impedance_resistance")
+    if (has_xl and has_xc) and _has_query_type(schema, ("circuit_characteristic", "characteristic", "text", "string")):
+        add("rlc_characteristic_from_reactance")
     if has_l and has_c and (has_f or has_omega or _has_query_type(schema, ("frequency", "angular_frequency", "capacitance", "inductance"))):
         add("lc_resonance_frequency")
         add("lc_resonance_angular_frequency")
@@ -2595,9 +2802,23 @@ def _canonical_formula(schema: dict[str, Any], formula: str) -> str:
         "turn_density": "solenoid_turn_density",
         "turn_density_from_turn_count_and_length": "solenoid_turn_density",
         "inductive_reactance": "ac_inductive_reactance",
+        "inductive_reactance_formula": "ac_inductive_reactance",
+        "ac_inductive_reactance": "ac_inductive_reactance",
+        "capacitive_reactance": "ac_capacitive_reactance",
+        "capacitive_reactance_formula": "ac_capacitive_reactance",
+        "ac_capacitive_reactance": "ac_capacitive_reactance",
+        "reactance_inductor": "ac_inductive_reactance",
+        "reactance_capacitor": "ac_capacitive_reactance",
         "capacitor_voltage_charge": "capacitor_charge_voltage",
         "total_impedance_from_components": "ac_impedance",
         "impedance_series": "ac_impedance",
+        "series_rlc_impedance": "ac_impedance",
+        "rlc_impedance": "ac_impedance",
+        "rlc_power_voltage_impedance_resistance": "rlc_power_voltage_impedance_resistance",
+        "power_rlc_series": "rlc_power_voltage_impedance_resistance",
+        "real_power_rlc": "rlc_power_voltage_impedance_resistance",
+        "rlc_characteristic": "rlc_characteristic_from_reactance",
+        "circuit_characteristic_from_reactance": "rlc_characteristic_from_reactance",
     }
     key = aliases.get(key, key)
 
@@ -2670,7 +2891,11 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "power_voltage_current": _solve_power_voltage_current,
         "power_voltage_resistance": _solve_power_voltage_resistance,
         "power_current_resistance": _solve_power_current_resistance,
+        "ac_inductive_reactance": _solve_ac_inductive_reactance,
+        "ac_capacitive_reactance": _solve_ac_capacitive_reactance,
         "ac_impedance": _solve_ac_impedance,
+        "rlc_power_voltage_impedance_resistance": _solve_rlc_power_voltage_impedance_resistance,
+        "rlc_characteristic_from_reactance": _solve_rlc_characteristic_from_reactance,
         "power_factor": _solve_power_factor,
         "power_factor_at_resonance": _solve_power_factor_at_resonance,
         "quality_factor": _solve_quality_factor,

@@ -608,6 +608,80 @@ FORMULA_DOCS: list[FormulaDoc] = [
         ),
     ),
 
+    FormulaDoc(
+        id="ac_inductive_reactance",
+        name="Inductive reactance",
+        equation="XL = 2*pi*f*L = omega*L",
+        description="Use for inductive reactance of an inductor in AC circuits.",
+        quantity_types=["inductive_reactance", "inductance", "frequency", "angular_frequency"],
+        query_types=["inductive_reactance", "inductance", "frequency"],
+        tags=["ac", "rlc", "reactance", "inductive_reactance", "inductance", "frequency"],
+        keywords=["inductive reactance", "Z_L", "XL", "reactance of inductor", "frequency inductance"],
+        schema_template=_schema(
+            "ac_inductive_reactance",
+            [
+                {"id": "L1", "type": "inductance", "role": "given", "value": "<number>", "unit": "<H|mH|uH>"},
+                {"id": "f1", "type": "frequency", "role": "given", "value": "<number>", "unit": "<Hz|kHz>"},
+                {"id": "XL_query", "type": "inductive_reactance", "role": "query", "value": None, "unit": "ohm"},
+            ],
+        ),
+    ),
+    FormulaDoc(
+        id="ac_capacitive_reactance",
+        name="Capacitive reactance",
+        equation="XC = 1/(2*pi*f*C) = 1/(omega*C)",
+        description="Use for capacitive reactance of a capacitor in AC circuits.",
+        quantity_types=["capacitive_reactance", "capacitance", "frequency", "angular_frequency"],
+        query_types=["capacitive_reactance", "capacitance", "frequency"],
+        tags=["ac", "rlc", "reactance", "capacitive_reactance", "capacitance", "frequency"],
+        keywords=["capacitive reactance", "Z_C", "XC", "reactance of capacitor", "frequency capacitance"],
+        schema_template=_schema(
+            "ac_capacitive_reactance",
+            [
+                {"id": "C1", "type": "capacitance", "role": "given", "value": "<number>", "unit": "<F|uF|nF>"},
+                {"id": "f1", "type": "frequency", "role": "given", "value": "<number>", "unit": "<Hz|kHz>"},
+                {"id": "XC_query", "type": "capacitive_reactance", "role": "query", "value": None, "unit": "ohm"},
+            ],
+        ),
+    ),
+    FormulaDoc(
+        id="rlc_power_voltage_impedance_resistance",
+        name="Real power in a series RLC circuit",
+        equation="P = I^2 R = (U/Z)^2 R",
+        description="Use for real power consumed/dissipated in a series RLC circuit when total voltage, impedance, and resistance are known.",
+        quantity_types=["power", "voltage", "impedance", "resistance"],
+        query_types=["power"],
+        tags=["ac", "rlc", "power", "impedance", "resistance", "voltage"],
+        keywords=["power consumed", "power dissipated", "RLC series", "source voltage", "impedance Z", "resistance R"],
+        schema_template=_schema(
+            "rlc_power_voltage_impedance_resistance",
+            [
+                {"id": "U1", "type": "voltage", "role": "given", "value": "<number>", "unit": "V"},
+                {"id": "Z1", "type": "impedance", "role": "given", "value": "<number>", "unit": "ohm"},
+                {"id": "R1", "type": "resistance", "role": "given", "value": "<number>", "unit": "ohm"},
+                {"id": "P_query", "type": "power", "role": "query", "value": None, "unit": "W"},
+            ],
+        ),
+    ),
+    FormulaDoc(
+        id="rlc_characteristic_from_reactance",
+        name="RLC circuit characteristic from reactances",
+        equation="compare XL and XC",
+        description="Use to classify a series RLC circuit as inductive, capacitive, or resonant from XL and XC.",
+        quantity_types=["inductive_reactance", "capacitive_reactance", "circuit_characteristic"],
+        query_types=["circuit_characteristic"],
+        tags=["ac", "rlc", "reactance", "characteristic", "inductive", "capacitive"],
+        keywords=["circuit characteristic", "inductive or capacitive", "Z_L", "Z_C", "XL greater than XC"],
+        schema_template=_schema(
+            "rlc_characteristic_from_reactance",
+            [
+                {"id": "XL1", "type": "inductive_reactance", "role": "given", "value": "<number>", "unit": "ohm"},
+                {"id": "XC1", "type": "capacitive_reactance", "role": "given", "value": "<number>", "unit": "ohm"},
+                {"id": "char_query", "type": "circuit_characteristic", "role": "query", "value": None, "unit": ""},
+            ],
+        ),
+    ),
+
 ]
 
 

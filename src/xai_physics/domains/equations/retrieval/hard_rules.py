@@ -161,8 +161,23 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
     if "inductor" in text and ("energy" in text or "magnetic energy" in text):
         add("inductor_energy", 5.0)
 
-    if "impedance" in text and ("reactance" in text or "xl" in text or "xc" in text):
-        add("ac_impedance", 5.0)
+    if ("inductive reactance" in text or "z_l" in text or "xl" in text or "x_l" in text) and ("frequency" in text or "f =" in text or " f=" in text) and ("inductance" in text or " l =" in text or " l=" in text):
+        add("ac_inductive_reactance", 6.0)
+
+    if ("capacitive reactance" in text or "z_c" in text or "xc" in text or "x_c" in text) and ("frequency" in text or "f =" in text or " f=" in text) and ("capacitance" in text or " c =" in text or " c=" in text):
+        add("ac_capacitive_reactance", 6.0)
+
+    if "impedance" in text and ("rlc" in text or "reactance" in text or "xl" in text or "xc" in text or ("inductance" in text and "capacitance" in text and "frequency" in text)):
+        add("ac_impedance", 6.0)
+
+    if ("power consumed" in text or "power dissipated" in text or "power consumed" in text) and "impedance" in text and "resistance" in text and ("voltage" in text or "source voltage" in text or "total voltage" in text):
+        add("rlc_power_voltage_impedance_resistance", 6.0)
+
+    if "power factor" in text or "cosφ" in text or "cos phi" in text or "cosphi" in text:
+        add("power_factor", 6.0)
+
+    if ("characteristic" in text or "exhibit" in text) and ("z_l" in text or "z_c" in text or "xl" in text or "xc" in text or "reactance" in text):
+        add("rlc_characteristic_from_reactance", 6.0)
 
     if "power" in text and "voltage" in text and ("resistance" in text or "resistor" in text):
         add("power_voltage_resistance", 5.0)
