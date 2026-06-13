@@ -96,3 +96,12 @@ def test_replay_dataset_runner_uses_cache_by_case_id(tmp_path):
     assert report["solved"] == 1
     assert report["correct"] == 1
     assert report["results"][0]["schema_source"] == "formula_driven"
+
+
+def test_replay_compare_answer_handles_units_and_dirty_scientific_notation():
+    from xai_physics.eval.replay_llm_dataset import compare_answer
+
+    assert compare_answer("5006.92525189 pF", "5", expected_unit="nF") is True
+    assert compare_answer("0.005231928 uC", "5.23", expected_unit="nC") is True
+    assert compare_answer("4.5e+06 V/m", "45.10^{5}", expected_unit="V/m") is True
+    assert compare_answer({"Ex": "11 V/m", "magnitude": "245.909 V/m"}, "245.91", expected_unit="N/C") is True

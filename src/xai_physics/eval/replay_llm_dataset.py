@@ -13,12 +13,50 @@ from xai_physics.llm.replay_cache import ReplaySchemaLLM, load_replay_cache
 from xai_physics.llm.schema_pipeline import solve_problem_with_llm
 
 
-_SCI_RE = re.compile(
-    r"([-+]?\d+(?:\.\d+)?)\s*(?:×|x|\*)\s*10\s*(?:\^)?\s*([-+]?\d+)",
-    re.IGNORECASE,
-)
+_SUPERSCRIPT_TRANS = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺", "0123456789-+")
 _FRACTION_RE = re.compile(r"^\s*([-+]?\d+(?:\.\d+)?)\s*/\s*([-+]?\d+(?:\.\d+)?)\s*$")
 _NUMBER_RE = re.compile(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+_SCI_RE = re.compile(
+    r"([-+]?\d+(?:\.\d+)?)\s*(?:x)\s*10\s*([-+]?\d+)",
+    re.IGNORECASE,
+)
+
+_UNIT_FACTORS = {
+    "": 1.0,
+    "-": 1.0,
+    "—": 1.0,
+    "pf": 1e-12,
+    "nf": 1e-9,
+    "uf": 1e-6,
+    "μf": 1e-6,
+    "µf": 1e-6,
+    "mf": 1e-3,
+    "f": 1.0,
+    "pc": 1e-12,
+    "nc": 1e-9,
+    "uc": 1e-6,
+    "μc": 1e-6,
+    "µc": 1e-6,
+    "mc": 1e-3,
+    "c": 1.0,
+    "pj": 1e-12,
+    "nj": 1e-9,
+    "uj": 1e-6,
+    "μj": 1e-6,
+    "µj": 1e-6,
+    "mj": 1e-3,
+    "j": 1.0,
+    "mm": 1e-3,
+    "cm": 1e-2,
+    "m": 1.0,
+    "v/m": 1.0,
+    "n/c": 1.0,
+    "v": 1.0,
+    "n": 1.0,
+    "kg": 1.0,
+    "rad": 1.0,
+    "degree": 1.0,
+}
 
 
 @dataclass(frozen=True)
@@ -47,10 +85,18 @@ def _parse_case_ids(value: str | None) -> set[str] | None:
     return {part.strip() for part in value.split(",") if part.strip()}
 
 
-def _expected_number(value: str | None) -> float | None:
+def _normalize_math_text(value: str | None) -> str:
     if value is None:
-        return None
-    text = str(value).strip()
+        return ""
+    text = str(value).strip().lower().translate(_SUPERSCRIPT_TRANS)
+    text = text.replace("×", "x").replace("*", "x").replace("·", "x")
+    text = text.replace(" . ", " x ").replace(".10", "x10")
+    text = text.replace("{", "").replace("}", "").replace("^", "")
+    return text
+
+
+def _first_number(value: str | None) -> float | None:
+    text = _normalize_math_text(value)
     if not text:
         return None
 
@@ -64,7 +110,7 @@ def _expected_number(value: str | None) -> float | None:
     if sci:
         return float(sci.group(1)) * (10 ** int(sci.group(2)))
 
-    # Some dirty gold strings contain simple sqrt forms. For replay benchmarking,
+    # Dirty gold strings may contain symbolic forms. For replay benchmarking,
     # use the first numeric token instead of evaluating arbitrary expressions.
     num = _NUMBER_RE.search(text)
     if num:
@@ -72,20 +118,46 @@ def _expected_number(value: str | None) -> float | None:
     return None
 
 
-def _predicted_number(value: str | None) -> float | None:
+def _normalize_unit(unit: str | None) -> str:
+    if unit is None:
+        return ""
+    return _normalize_math_text(unit).replace(" ", "")
+
+
+def _predicted_number_and_unit(value: Any) -> tuple[float | None, str]:
+    if isinstance(value, dict):
+        value = value.get("magnitude") or next(iter(value.values()), None)
     if value is None:
-        return None
-    num = _NUMBER_RE.search(str(value))
+        return None, ""
+
+    text = _normalize_math_text(str(value))
+    num = _NUMBER_RE.search(text)
     if not num:
-        return None
-    return float(num.group(0))
+        return None, ""
+
+    unit = text[num.end():].strip().split()[0] if text[num.end():].strip() else ""
+    return float(num.group(0)), _normalize_unit(unit)
 
 
-def compare_answer(predicted: str | None, expected: str | None, *, rel_tol: float = 5e-2, abs_tol: float = 1e-9) -> bool | None:
-    expected_num = _expected_number(expected)
-    predicted_num = _predicted_number(predicted)
+def compare_answer(
+    predicted: Any,
+    expected: str | None,
+    *,
+    expected_unit: str | None = None,
+    rel_tol: float = 5e-2,
+    abs_tol: float = 1e-9,
+) -> bool | None:
+    expected_num = _first_number(expected)
+    predicted_num, predicted_unit = _predicted_number_and_unit(predicted)
     if expected_num is None or predicted_num is None:
         return None
+
+    expected_unit_norm = _normalize_unit(expected_unit)
+    if predicted_unit in _UNIT_FACTORS and expected_unit_norm in _UNIT_FACTORS:
+        expected_factor = _UNIT_FACTORS[expected_unit_norm]
+        if expected_factor != 0:
+            predicted_num = predicted_num * _UNIT_FACTORS[predicted_unit] / expected_factor
+
     return math.isclose(predicted_num, expected_num, rel_tol=rel_tol, abs_tol=abs_tol)
 
 
@@ -179,7 +251,7 @@ def run_replay_benchmark(
                 data = getattr(step, "data", None)
                 if isinstance(data, dict) and "candidate_source" in data:
                     schema_source = str(data["candidate_source"])
-            correct = compare_answer(result.answer, row.expected)
+            correct = compare_answer(result.answer, row.expected, expected_unit=row.expected_unit)
             results.append(
                 ReplayEvalResult(
                     case_id=row.case_id,
