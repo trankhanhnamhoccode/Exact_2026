@@ -12,6 +12,7 @@ from xai_physics.domains.electrostatics.text_extractor import extract_electrosta
 from xai_physics.domains.equations.text_extractor import extract_equations_schema_from_text
 from xai_physics.hybrid.candidate_ranker import SchemaCandidate, select_best_candidate
 from xai_physics.hybrid.equations_candidates import generate_equations_candidate_schemas
+from xai_physics.hybrid.electrostatics_repair import repair_electrostatics_schema_with_question
 
 
 
@@ -92,7 +93,11 @@ def _try_equations_hybrid_selection(
     llm_schema: dict[str, Any] | None = None,
     deterministic_schema: dict[str, Any] | None = None,
 ) -> SchemaPipelineResult | None:
-    if prompt_result.domain_decision.domain != "equations":
+    formula_candidates = generate_equations_candidate_schemas(problem)
+    domain = prompt_result.domain_decision.domain
+    if domain not in {"equations", "electrostatics"}:
+        return None
+    if domain != "equations" and not formula_candidates:
         return None
 
     candidates = _equations_hybrid_candidates(
@@ -156,6 +161,7 @@ def solve_problem_with_llm(
     if prompt_result.domain_decision.domain == "electrostatics":
         schema = extract_electrostatics_schema_from_text(problem)
         if schema is not None:
+            schema = repair_electrostatics_schema_with_question(problem, schema)
             result = solve_schema(schema)
             result.add_step("Prompt built", f"Domain: {prompt_result.domain_decision.domain}")
             result.add_step("Deterministic electrostatics schema extracted", "Used narrow geometry/text extractor before LLM generation.")
@@ -229,6 +235,9 @@ def solve_problem_with_llm(
     # recognizes a benchmark-safe pattern; otherwise fall back to the LLM schema.
     if deterministic_schema is not None:
         schema = deterministic_schema
+
+    if prompt_result.domain_decision.domain == "electrostatics":
+        schema = repair_electrostatics_schema_with_question(problem, schema)
 
     _attach_formula_candidates(schema, prompt_result)
     result = solve_schema(schema)

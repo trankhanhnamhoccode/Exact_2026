@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-NUM = r"[-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:\s*(?:×|x|\*)\s*10\s*(?:\^|\*\*)?\s*[-+]?\d+|[eE][-+]?\d+)?"
+NUM = r"[-+]?(?:(?:\d+(?:\.\d+)?|\.\d+)(?:\s*(?:×|x|\*)\s*10\s*(?:\^|\*\*)?\s*[-+]?\d+|[eE][-+]?\d+)?|10\s*(?:\^|\*\*)\s*[-+]?\d+|10\s*[-+]\s*\d+)"
 
 
 def _norm(text: str) -> str:
@@ -18,19 +18,21 @@ def _norm(text: str) -> str:
     supers = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")
     text = text.translate(supers)
     text = text.replace("²", "2").replace("³", "3")
-    text = re.sub(r"10\s*-\s*(\d+)", r"1e-\1", text)
     return text
 
 
 def _parse_number(raw: str) -> float:
     cleaned = raw.strip().replace(",", "")
+    cleaned = re.sub(r"^([-+]?)10\s*(?:\^|\*\*)\s*([-+]?\d+)$", r"\g<1>1e\2", cleaned)
+    cleaned = re.sub(r"^([-+]?)10\s*([-+]\s*\d+)$", lambda m: f"{m.group(1)}1e{m.group(2).replace(' ', '')}", cleaned)
     cleaned = re.sub(r"\s*(?:×|x|\*)\s*10\s*(?:\^|\*\*)?\s*", "e", cleaned)
     cleaned = cleaned.replace(" ", "")
     return float(cleaned)
 
 
 def _unit(raw: str) -> str:
-    return raw.replace("µ", "u").replace("μ", "u").replace("²", "2").replace("^2", "2")
+    unit = raw.replace("µ", "u").replace("μ", "u").replace("²", "2").replace("^2", "2")
+    return unit.replace(" / ", "/").replace(" /", "/").replace("/ ", "/")
 
 
 def _quantity(value: float, unit: str) -> dict[str, Any]:
@@ -120,7 +122,10 @@ def _charge(text: str) -> tuple[float, str] | None:
     return _find_quantity(
         [
             rf"\bQ\s*=\s*(?P<value>{NUM})\s*{unit}\b",
-            rf"\bcharge(?:\s+of|\s+is|\s*=|\s+Q\s*=)?\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\bq\s*=\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\bcharge(?:\s+q)?(?:\s+of|\s+is|\s*=|\s+Q\s*=)?\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\b(?:point\s+charge|electric\s+charge|charge)\s+(?:q\s*=\s*)?(?P<value>{NUM})\s*{unit}\b",
+            rf"\bcarrying\s+(?:an?\s+)?electric\s+charge\s+of\s+(?P<value>{NUM})\s*{unit}\b",
             rf"\bstores\s+(?:a\s+)?(?:charge\s+)?(?:Q\s*=\s*)?(?P<value>{NUM})\s*{unit}\b",
         ],
         text,
@@ -155,15 +160,21 @@ def _distance(text: str) -> tuple[float, str] | None:
     return _find_quantity(
         [
             rf"\b(?:plate\s+)?separation(?:\s+is|\s*=|\s+of)?\s*(?P<value>{NUM})\s*{unit}\b",
-            rf"\bdistance\s+between\s+(?:the\s+)?(?:two\s+)?plates(?:\s+is|\s*=|\s+and[^,.]*?are)?\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\bdistance\s+between\s+(?:the\s+)?(?:two\s+)?plates(?:\s+is|\s*=|\s+and[^,.]*?are)?\s*(?:d\s*=\s*)?(?P<value>{NUM})\s*{unit}\b",
             rf"\bd\s*=\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\bdistance\s*(?:r|MO)?\s*(?:=|is|of)?\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\br\s*=\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\b(?P<value>{NUM})\s*{unit}\s+away\s+from\b",
+            rf"\bat\s+(?:a\s+)?point\s+(?P<value>{NUM})\s*{unit}\s+away\b",
+            rf"\b(?P<value>{NUM})\s*{unit}\s+from\s+(?:the\s+)?(?:sphere|charge|wire)\b",
+            rf"\bMO\s*=\s*(?P<value>{NUM})\s*{unit}\b",
         ],
         text,
     )
 
 
 def _is_charge_query(low: str) -> bool:
-    return any(p in low for p in ["calculate the charge", "what is the charge", "charge stored", "charge on", "charge accumulated", "maximum charge"])
+    return any(p in low for p in ["calculate the charge", "what is the charge", "find the charge", "charge stored", "charge on", "charge accumulated", "maximum charge"])
 
 
 def _is_energy_query(low: str) -> bool:
@@ -177,6 +188,40 @@ def _is_capacitance_query(low: str) -> bool:
 def _is_dielectric_constant_query(low: str) -> bool:
     return any(p in low for p in ["dielectric constant", "relative permittivity", "permittivity"]) and any(
         p in low for p in ["what is", "calculate", "find", "determine"]
+    )
+
+
+def _is_electric_field_query(low: str) -> bool:
+    return any(p in low for p in ["electric field", "field strength", "field intensity", "n/c", "v/m"])
+
+
+def _line_charge_density(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>pC\s*/\s*m|nC\s*/\s*m|uC\s*/\s*m|mC\s*/\s*m|C\s*/\s*m)"
+    return _find_quantity(
+        [
+            rf"(?:linear\s+charge\s+density(?:\s*(?:λ|lambda))?|λ|lambda)\s*(?:=|of|is)?\s*(?P<value>{NUM})\s*{unit}",
+        ],
+        text,
+    )
+
+
+def _mass(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>kg|g)"
+    return _find_quantity(
+        [
+            rf"\bm\s*=\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\bmass(?:\s+of|\s+is|\s*=)?\s*(?P<value>{NUM})\s*{unit}\b",
+        ],
+        text,
+    )
+
+
+def _gravity(text: str) -> tuple[float, str] | None:
+    return _find_quantity(
+        [
+            rf"\bg\s*=\s*(?P<value>{NUM})\s*(?P<unit>m/s2|m/s\^2|m/s²)\b",
+        ],
+        text,
     )
 
 
@@ -285,6 +330,45 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
                 ],
             )
         )
+
+    if q is not None and _distance(text) is not None and _is_electric_field_query(low) and any(p in low for p in ["point charge", "small sphere", "electric charge", "charge q", "charge of"]):
+        r = _distance(text)
+        candidates.append(
+            _schema(
+                "point_charge_electric_field",
+                [
+                    {"id": "q1", "type": "charge", "role": "given", **_quantity(*q)},
+                    {"id": "r1", "type": "distance", "role": "given", **_quantity(*r)},
+                    {"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"},
+                ],
+            )
+        )
+
+    line_charge = _line_charge_density(text)
+    if line_charge is not None and _distance(text) is not None and _is_electric_field_query(low) and any(p in low for p in ["wire", "linear charge density", "λ", "lambda"]):
+        r = _distance(text)
+        candidates.append(
+            _schema(
+                "infinite_wire_electric_field",
+                [
+                    {"id": "lambda1", "type": "line_charge_density", "role": "given", **_quantity(*line_charge)},
+                    {"id": "r1", "type": "distance", "role": "given", **_quantity(*r)},
+                    {"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"},
+                ],
+            )
+        )
+
+    mass = _mass(text)
+    if mass is not None and q is not None and _is_electric_field_query(low) and "equilibrium" in low:
+        objects = [
+            {"id": "m1", "type": "mass", "role": "given", **_quantity(*mass)},
+            {"id": "q1", "type": "charge", "role": "given", **_quantity(*q)},
+        ]
+        g = _gravity(text)
+        if g is not None:
+            objects.append({"id": "g1", "type": "gravitational_acceleration", "role": "given", **_quantity(*g)})
+        objects.append({"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"})
+        candidates.append(_schema("equilibrium_electric_field", objects))
 
     # Preserve order but deduplicate by a compact schema signature.
     out: list[dict[str, Any]] = []

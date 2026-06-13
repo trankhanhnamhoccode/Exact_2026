@@ -104,6 +104,14 @@ def _extract_charges(text: str) -> list[dict[str, Any]]:
         cid = m.group(1).replace("'", "′")
         raw.append((cid, _parse_number(m.group(2)), _unit(m.group(3))))
 
+    # Handles q1 = q2 = q3 = 1 μC before the shorter q2=q3
+    # regex can partially match and accidentally drop q1.
+    for m in re.finditer(rf"\b(q\d+)\s*=\s*(q\d+)\s*=\s*(q\d+)\s*=\s*({NUM})\s*({UNIT_CHARGE})\b", text, flags=re.I):
+        value, unit = _parse_number(m.group(4)), _unit(m.group(5))
+        raw.append((m.group(1), value, unit))
+        raw.append((m.group(2), value, unit))
+        raw.append((m.group(3), value, unit))
+
     # Handles q2 = q3 = -8e-9 C even when q1/q0 were parsed separately.
     for m in re.finditer(rf"\b(q\d+)\s*=\s*(q\d+)\s*=\s*({NUM})\s*({UNIT_CHARGE})\b", text, flags=re.I):
         value, unit = _parse_number(m.group(3)), _unit(m.group(4))
