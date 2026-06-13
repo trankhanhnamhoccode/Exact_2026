@@ -798,6 +798,82 @@ FORMULA_DOCS: list[FormulaDoc] = [
         ),
     ),
 
+    FormulaDoc(
+        id="lc_natural_period",
+        name="LC natural period",
+        equation="T = 2*pi*sqrt(L*C)",
+        description="Use for natural period of an ideal LC oscillator; also supports f=1/T and omega=2*pi/T.",
+        quantity_types=["period", "time", "frequency", "angular_frequency", "inductance", "capacitance"],
+        query_types=["period", "time", "frequency", "angular_frequency"],
+        tags=["lc", "oscillation", "period", "frequency", "angular_frequency", "inductance", "capacitance"],
+        keywords=["natural period", "period of oscillation", "oscillation period", "T = 2 pi sqrt LC", "LC circuit", "angular frequency"],
+        schema_template=_schema(
+            "lc_natural_period",
+            [
+                {"id": "L1", "type": "inductance", "role": "given", "value": "<number>", "unit": "<H|mH|uH>"},
+                {"id": "C1", "type": "capacitance", "role": "given", "value": "<number>", "unit": "<F|uF|nF|pF>"},
+                {"id": "T_query", "type": "period", "role": "query", "value": None, "unit": "s"},
+            ],
+        ),
+    ),
+    FormulaDoc(
+        id="lc_max_voltage_charge_capacitance",
+        name="LC maximum voltage from maximum charge",
+        equation="Umax = Qmax/C",
+        description="Use when maximum capacitor charge and capacitance are given and maximum voltage is asked.",
+        quantity_types=["voltage", "charge", "charge_amplitude", "capacitance"],
+        query_types=["voltage", "voltage_amplitude"],
+        tags=["lc", "capacitor", "maximum", "charge", "voltage", "capacitance"],
+        keywords=["maximum charge", "maximum voltage", "Qmax", "Umax", "capacitor plates"],
+        schema_template=_schema(
+            "lc_max_voltage_charge_capacitance",
+            [
+                {"id": "Qmax", "type": "charge_amplitude", "role": "given", "value": "<number>", "unit": "<C|mC|uC>"},
+                {"id": "C1", "type": "capacitance", "role": "given", "value": "<number>", "unit": "<F|uF>"},
+                {"id": "Umax_query", "type": "voltage", "role": "query", "value": None, "unit": "V"},
+            ],
+        ),
+    ),
+    FormulaDoc(
+        id="lc_magnetic_energy_current_time",
+        name="LC magnetic energy from harmonic current",
+        equation="Wm = 1/2*L*(I0*cos(omega*t+phi))^2",
+        description="Use for magnetic energy at a time when current is given as a cosine function.",
+        quantity_types=["energy", "inductance", "current", "current_amplitude", "angular_frequency", "time", "phase"],
+        query_types=["energy"],
+        tags=["lc", "inductor", "magnetic_energy", "time_domain", "current", "cos"],
+        keywords=["magnetic energy at time", "current as a function of time", "I0 cos", "cos omega t", "instantaneous magnetic energy"],
+        schema_template=_schema(
+            "lc_magnetic_energy_current_time",
+            [
+                {"id": "L1", "type": "inductance", "role": "given", "value": "<number>", "unit": "H"},
+                {"id": "I0", "type": "current_amplitude", "role": "given", "value": "<number>", "unit": "A"},
+                {"id": "omega1", "type": "angular_frequency", "role": "given", "value": "<number>", "unit": "rad/s"},
+                {"id": "t1", "type": "time", "role": "given", "value": "<number>", "unit": "s"},
+                {"id": "Wm_query", "type": "energy", "role": "query", "value": None, "unit": "J"},
+            ],
+        ),
+    ),
+    FormulaDoc(
+        id="lc_energy_complement",
+        name="LC complementary energy",
+        equation="Wm = Wtotal - We, or We = Wtotal - Wm",
+        description="Use when total LC energy and one instantaneous energy are known, and the other energy is asked.",
+        quantity_types=["energy", "total_energy", "capacitance", "voltage", "inductance", "current"],
+        query_types=["energy"],
+        tags=["lc", "energy", "conservation", "complement", "electric_energy", "magnetic_energy"],
+        keywords=["total energy", "magnetic field energy", "electric field energy", "voltage across capacitor", "current through inductor", "remaining energy"],
+        schema_template=_schema(
+            "lc_energy_complement",
+            [
+                {"id": "W_total", "type": "total_energy", "role": "given", "value": "<number>", "unit": "J"},
+                {"id": "C1", "type": "capacitance", "role": "given", "value": "<number>", "unit": "uF"},
+                {"id": "U1", "type": "voltage", "role": "given", "value": "<number>", "unit": "V"},
+                {"id": "Wm_query", "type": "energy", "role": "query", "value": None, "unit": "J", "symbol": "Wm"},
+            ],
+        ),
+    ),
+
 ]
 
 

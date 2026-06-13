@@ -36,6 +36,7 @@ def detect_tags(problem: str) -> list[TagHit]:
         ("repeated_measurements", 1.2, r"average value|average absolute error|mean value|mean absolute error|repeated measurements|measurements were taken|readings"),
         ("force", 1.2, r"attractive force|force between|force on"),
         ("time_domain", 1.2, r"instantaneous|at time|cos|sin|omega|angular frequency"),
+        ("period", 1.2, r"natural period|period of oscillation|oscillation period"),
         ("magnetic_flux", 1.3, r"magnetic flux|flux linkage|flux through"),
         ("turn_density", 1.3, r"turn density|turns per meter|turns/m|number of turns per meter"),
     ]
@@ -238,5 +239,20 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
 
     if "parallel" in text and ("resistance" in text or "resistor" in text or "branches" in text):
         add("parallel_resistance", 5.5)
+
+    if ("lc" in text or "oscillating circuit" in text or "oscillation" in text) and ("natural period" in text or "period of oscillation" in text or "oscillation period" in text):
+        add("lc_natural_period", 7.0)
+
+    if ("lc" in text or "oscillating circuit" in text or "oscillation" in text) and ("angular frequency" in text or "omega" in text or "ω" in text):
+        add("lc_resonance_angular_frequency", 6.5)
+
+    if ("maximum charge" in text or "qmax" in text or "q₀" in text or "q0" in text) and ("maximum voltage" in text or "voltage across" in text or "capacitor plates" in text):
+        add("lc_max_voltage_charge_capacitance", 7.0)
+
+    if ("magnetic energy" in text or "magnetic field energy" in text) and ("current" in text or "i =" in text or "i=" in text) and ("cos" in text or "at time" in text or "maximum" in text):
+        add("lc_magnetic_energy_current_time", 7.0)
+
+    if ("total energy" in text or "total oscillation energy" in text) and (("voltage" in text and "capacitance" in text) or ("current" in text and "inductance" in text)) and ("magnetic" in text or "electric" in text):
+        add("lc_energy_complement", 7.0)
 
     return scores

@@ -172,6 +172,9 @@ def _unit_factor(unit: str | None) -> float:
         "rad/s": 1.0,
         "s": 1.0,
         "ms": 1e-3,
+        "us": 1e-6,
+        "µs": 1e-6,
+        "?s": 1e-6,
 
         # mass / force / acceleration
         "kg": 1.0,
@@ -1090,7 +1093,10 @@ def _solve_inductor_energy(schema: dict[str, Any], formula: str) -> SolveResult:
     try:
         if w_query is not None:
             l = _required_si(schema, "inductance", "H")
-            i = _required_si(schema, "current", "A")
+            current_obj = _given_obj(schema, "current") or _given_obj(schema, "current_amplitude")
+            if current_obj is None:
+                raise ValueError("Missing given object of type current or current_amplitude")
+            i = _to_si_quantity(current_obj, "A")
             value = 0.5 * l * i * i
             query = w_query
             quantity_type = "energy"
@@ -1211,6 +1217,177 @@ def _solve_lc_resonance_angular_frequency(schema: dict[str, Any], formula: str) 
     result.answer = _answer(value, query, quantity_type, default_unit)
     return result
 
+
+
+
+def _period_query_obj(schema: dict[str, Any]) -> dict[str, Any] | None:
+    query = _query_obj(schema, "period")
+    if query is not None:
+        return query
+    for obj in _iter_unique_objects(schema):
+        if obj.get("role") in {"query", "unknown"} and obj.get("type") == "time" and _raw_value(obj) is None:
+            blob = _id_symbol_text(obj)
+            if "period" in blob or blob in {"t", "t_query time", "time"} or "t_query" in blob:
+                return obj
+    return None
+
+
+def _solve_lc_natural_period(schema: dict[str, Any], formula: str) -> SolveResult:
+    period_query = _period_query_obj(schema)
+    f_query = _query_obj(schema, "frequency")
+    omega_query = _query_obj(schema, "angular_frequency")
+
+    try:
+        if period_query is not None:
+            if _given_obj(schema, "frequency") is not None:
+                f = _required_si(schema, "frequency", "Hz")
+                if f <= 0:
+                    return _fail("Frequency must be positive.", formula)
+                value = 1.0 / f
+            elif _given_obj(schema, "angular_frequency") is not None:
+                omega = _required_si(schema, "angular_frequency", "rad/s")
+                if omega <= 0:
+                    return _fail("Angular frequency must be positive.", formula)
+                value = 2.0 * math.pi / omega
+            else:
+                l = _required_si(schema, "inductance", "H")
+                c = _required_si(schema, "capacitance", "F")
+                if l <= 0 or c <= 0:
+                    return _fail("L and C must be positive.", formula)
+                value = 2.0 * math.pi * math.sqrt(l * c)
+            query = period_query
+            quantity_type = "period"
+            default_unit = "s"
+        elif f_query is not None:
+            if _given_obj(schema, "angular_frequency") is not None:
+                omega = _required_si(schema, "angular_frequency", "rad/s")
+                value = omega / (2.0 * math.pi)
+            elif _given_obj(schema, ("period", "time")) is not None:
+                period_obj = _given_obj(schema, "period") or _given_obj(schema, "time")
+                t = _to_si_quantity(period_obj, "s")
+                if t <= 0:
+                    return _fail("Period must be positive.", formula)
+                value = 1.0 / t
+            else:
+                l = _required_si(schema, "inductance", "H")
+                c = _required_si(schema, "capacitance", "F")
+                if l <= 0 or c <= 0:
+                    return _fail("L and C must be positive.", formula)
+                value = 1.0 / (2.0 * math.pi * math.sqrt(l * c))
+            query = f_query
+            quantity_type = "frequency"
+            default_unit = "Hz"
+        elif omega_query is not None:
+            if _given_obj(schema, "frequency") is not None:
+                f = _required_si(schema, "frequency", "Hz")
+                value = 2.0 * math.pi * f
+            elif _given_obj(schema, ("period", "time")) is not None:
+                period_obj = _given_obj(schema, "period") or _given_obj(schema, "time")
+                t = _to_si_quantity(period_obj, "s")
+                if t <= 0:
+                    return _fail("Period must be positive.", formula)
+                value = 2.0 * math.pi / t
+            else:
+                l = _required_si(schema, "inductance", "H")
+                c = _required_si(schema, "capacitance", "F")
+                if l <= 0 or c <= 0:
+                    return _fail("L and C must be positive.", formula)
+                value = 1.0 / math.sqrt(l * c)
+            query = omega_query
+            quantity_type = "angular_frequency"
+            default_unit = "rad/s"
+        else:
+            return _fail("Only period/frequency/angular_frequency queries are supported for LC natural oscillation.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use LC natural oscillation T=2*pi*sqrt(L*C), f=1/T, omega=2*pi*f.")
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
+def _solve_lc_max_voltage_charge_capacitance(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "voltage") or _query_obj(schema, "voltage_amplitude")
+    if query is None:
+        return _fail("Only voltage query is supported for Umax=Qmax/C.", formula)
+    try:
+        q_obj = _given_obj(schema, "charge_amplitude") or _given_obj(schema, "charge")
+        if q_obj is None:
+            raise ValueError("Missing maximum charge Qmax.")
+        q = _to_si_quantity(q_obj, "C")
+        c = _required_si(schema, "capacitance", "F")
+        if c == 0:
+            return _fail("Capacitance must be non-zero.", formula)
+        value = q / c
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "Use maximum capacitor voltage Umax=Qmax/C.")
+    result.answer = _answer(value, query, "voltage", "V")
+    return result
+
+
+def _current_from_harmonic_context(schema: dict[str, Any]) -> float:
+    current_obj = _given_obj(schema, "current")
+    if current_obj is not None:
+        return _to_si_quantity(current_obj, "A")
+    amp_obj = _given_obj(schema, "current_amplitude")
+    if amp_obj is None:
+        raise ValueError("Missing current or current amplitude I0.")
+    amp = _to_si_quantity(amp_obj, "A")
+    # If no time/omega is given, I0 is the maximum current.
+    if _given_obj(schema, "time") is None or _given_obj(schema, "angular_frequency") is None:
+        return amp
+    return amp * math.cos(_omega_t_phi(schema))
+
+
+def _solve_lc_magnetic_energy_current_time(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "energy")
+    if query is None:
+        return _fail("Only energy query is supported for Wm=1/2*L*i(t)^2.", formula)
+    try:
+        l = _required_si(schema, "inductance", "H")
+        i = _current_from_harmonic_context(schema)
+        value = 0.5 * l * i * i
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "Use instantaneous magnetic energy Wm=1/2*L*i(t)^2.")
+    result.answer = _answer(value, query, "energy", "J")
+    return result
+
+
+def _solve_lc_energy_complement(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "energy")
+    if query is None:
+        return _fail("Only energy query is supported for LC energy complement.", formula)
+    try:
+        total = _required_si(schema, "total_energy", "J") if _given_obj(schema, "total_energy") is not None else _required_si(schema, "energy", "J")
+        known_energy = None
+        voltage_obj = _given_obj(schema, "voltage")
+        capacitance_obj = _given_obj(schema, "capacitance")
+        current_obj = _given_obj(schema, "current")
+        inductance_obj = _given_obj(schema, "inductance")
+        if voltage_obj is not None and capacitance_obj is not None:
+            c = _to_si_quantity(capacitance_obj, "F")
+            u = _to_si_quantity(voltage_obj, "V")
+            known_energy = 0.5 * c * u * u
+        elif current_obj is not None and inductance_obj is not None:
+            l = _to_si_quantity(inductance_obj, "H")
+            i = _to_si_quantity(current_obj, "A")
+            known_energy = 0.5 * l * i * i
+        else:
+            raise ValueError("Need total energy plus instantaneous capacitor voltage or inductor current.")
+        value = total - known_energy
+        if abs(value) < 1e-15:
+            value = 0.0
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "In an ideal LC circuit, total energy is conserved: W_other = W_total - W_known.")
+    result.answer = _answer(value, query, "energy", "J")
+    return result
 
 def _solve_ohm_law(schema: dict[str, Any], formula: str) -> SolveResult:
     u_query = _query_obj(schema, "voltage")
@@ -2743,11 +2920,18 @@ def _compatible_formula_names_from_objects(schema: dict[str, Any]) -> list[str]:
         add("rlc_power_voltage_impedance_resistance")
     if (has_xl and has_xc) and _has_query_type(schema, ("circuit_characteristic", "characteristic", "text", "string")):
         add("rlc_characteristic_from_reactance")
-    if has_l and has_c and (has_f or has_omega or _has_query_type(schema, ("frequency", "angular_frequency", "capacitance", "inductance"))):
+    if has_l and has_c and (has_f or has_omega or _has_query_type(schema, ("frequency", "angular_frequency", "period", "time", "capacitance", "inductance"))):
         add("lc_resonance_frequency")
         add("lc_resonance_angular_frequency")
-    if has_l and has_i and ("energy" in types or _has_query_type(schema, "energy")):
+        if _period_query_obj(schema) is not None:
+            add("lc_natural_period")
+    if has_l and (has_i or "current_amplitude" in types) and ("energy" in types or _has_query_type(schema, "energy")):
         add("inductor_energy")
+        add("lc_magnetic_energy_current_time")
+    if has_c and ("charge" in types or "charge_amplitude" in types) and _has_query_type(schema, ("voltage", "voltage_amplitude")):
+        add("lc_max_voltage_charge_capacitance")
+    if _has_query_type(schema, "energy") and ("total_energy" in types or "energy" in types) and ((has_c and has_u) or (has_l and has_i)):
+        add("lc_energy_complement")
 
     # Basic circuit formulas.
     if has_u and has_i:
@@ -2905,6 +3089,17 @@ def _canonical_formula(schema: dict[str, Any], formula: str) -> str:
         "capacitor_inductor_resonant_frequency": "lc_resonance_frequency",
         "resonant_frequency_inductor_capacitor": "lc_resonance_frequency",
         "resonance_frequency": "lc_resonance_frequency",
+        "lc_natural_period": "lc_natural_period",
+        "natural_period": "lc_natural_period",
+        "oscillation_period": "lc_natural_period",
+        "lc_period": "lc_natural_period",
+        "lc_natural_angular_frequency": "lc_resonance_angular_frequency",
+        "natural_angular_frequency": "lc_resonance_angular_frequency",
+        "lc_max_voltage_charge_capacitance": "lc_max_voltage_charge_capacitance",
+        "maximum_voltage_charge_capacitance": "lc_max_voltage_charge_capacitance",
+        "lc_magnetic_energy_current_time": "lc_magnetic_energy_current_time",
+        "instantaneous_magnetic_energy_current_time": "lc_magnetic_energy_current_time",
+        "lc_energy_complement": "lc_energy_complement",
         "resonance_condition": "resonance_check",
         "power_factor_at_resonance": "power_factor_at_resonance",
         "resistance_voltage_current": "ohm_law",
@@ -2951,9 +3146,11 @@ def _canonical_formula(schema: dict[str, Any], formula: str) -> str:
     }
     key = aliases.get(key, key)
 
-    # If the LLM picked frequency formula but the query is angular frequency, route to omega.
+    # If the LLM picked frequency formula but the query is angular frequency/period, route accordingly.
     if key == "lc_resonance_frequency" and _query_obj(schema, "angular_frequency") is not None:
         return "lc_resonance_angular_frequency"
+    if key in {"lc_resonance_frequency", "lc_resonance_angular_frequency"} and _period_query_obj(schema) is not None:
+        return "lc_natural_period"
 
     # If there is a given frequency and no numeric query, the question is often Yes/No resonance.
     if key in {"lc_resonance_frequency", "quality_factor"}:
@@ -3020,6 +3217,10 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "lc_magnetic_energy_inductor": _solve_inductor_energy,
         "lc_resonance_frequency": _solve_lc_resonance_frequency,
         "lc_resonance_angular_frequency": _solve_lc_resonance_angular_frequency,
+        "lc_natural_period": _solve_lc_natural_period,
+        "lc_max_voltage_charge_capacitance": _solve_lc_max_voltage_charge_capacitance,
+        "lc_magnetic_energy_current_time": _solve_lc_magnetic_energy_current_time,
+        "lc_energy_complement": _solve_lc_energy_complement,
         "resonant_impedance_equals_resistance": _solve_ohm_law,
         "ohm_law": _solve_ohm_law,
         "impedance_voltage_current": _solve_impedance_voltage_current,
