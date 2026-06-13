@@ -298,6 +298,16 @@ def _candidate_query_intent(low: str) -> str | None:
         return "capacitance"
     if _is_energy_query(low):
         return "energy"
+    electric_field_query_phrases = [
+        "calculate the electric field",
+        "determine the electric field",
+        "what is the electric field",
+        "electric field strength",
+        "field strength",
+        "field intensity",
+    ]
+    if any(phrase in low for phrase in electric_field_query_phrases):
+        return "electric_field"
     if _is_force_query(low):
         return "force"
     if _is_electric_field_query(low):
@@ -321,6 +331,9 @@ def _quantity_inventory(text: str) -> dict[str, tuple[Quantity, ...]]:
         "force": _inventory_entry(_force(text)),
         "electric_field": _inventory_entry(_electric_field_given(text)),
         "relative_permittivity": _inventory_entry(_relative_permittivity_value(text)),
+        "line_charge_density": _inventory_entry(_line_charge_density(text)),
+        "mass": _inventory_entry(_mass(text)),
+        "gravity": _inventory_entry(_gravity(text)),
     }
     return {key: values for key, values in inv.items() if values}
 
@@ -340,30 +353,6 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
     c = _capacitance(text)
     u = _voltage(text)
     q = _charge(text)
-
-    if c is not None and u is not None and _is_charge_query(low):
-        candidates.append(
-            _schema(
-                "capacitor_charge_voltage",
-                [
-                    {"id": "C1", "type": "capacitance", "role": "given", **_quantity(*c)},
-                    {"id": "U1", "type": "voltage", "role": "given", **_quantity(*u)},
-                    {"id": "Q_query", "type": "charge", "role": "query", "value": None, "unit": "nC"},
-                ],
-            )
-        )
-
-    if q is not None and u is not None and _is_capacitance_query(low):
-        candidates.append(
-            _schema(
-                "capacitor_charge_voltage",
-                [
-                    {"id": "Q1", "type": "charge", "role": "given", **_quantity(*q)},
-                    {"id": "U1", "type": "voltage", "role": "given", **_quantity(*u)},
-                    {"id": "C_query", "type": "capacitance", "role": "query", "value": None, "unit": "uF"},
-                ],
-            )
-        )
 
     if c is not None and u is not None and _is_energy_query(low):
         candidates.append(
@@ -409,42 +398,6 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
     force = _force(text)
     field = _electric_field_given(text)
     mass = _mass(text)
-    if force is not None and q is not None and _is_electric_field_query(low):
-        candidates.append(
-            _schema(
-                "electric_force_field",
-                [
-                    {"id": "F1", "type": "force", "role": "given", **_quantity(*force)},
-                    {"id": "q1", "type": "charge", "role": "given", **_quantity(*q)},
-                    {"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"},
-                ],
-            )
-        )
-
-    if force is not None and field is not None and _is_charge_query(low):
-        candidates.append(
-            _schema(
-                "electric_force_field",
-                [
-                    {"id": "F1", "type": "force", "role": "given", **_quantity(*force)},
-                    {"id": "E1", "type": "electric_field", "role": "given", **_quantity(*field)},
-                    {"id": "q_query", "type": "charge", "role": "query", "value": None, "unit": "C"},
-                ],
-            )
-        )
-
-    if q is not None and field is not None and _is_force_query(low):
-        candidates.append(
-            _schema(
-                "electric_force_field",
-                [
-                    {"id": "q1", "type": "charge", "role": "given", **_quantity(*q)},
-                    {"id": "E1", "type": "electric_field", "role": "given", **_quantity(*field)},
-                    {"id": "F_query", "type": "force", "role": "query", "value": None, "unit": "N"},
-                ],
-            )
-        )
-
     if mass is not None and field is not None and _is_charge_query(low) and "equilibrium" in low:
         g = _gravity(text)
         g_value = g[0] if g is not None else 10.0
@@ -462,44 +415,7 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
             )
         )
 
-    if q is not None and _distance(text) is not None and _is_electric_field_query(low) and any(p in low for p in ["point charge", "small sphere", "electric charge", "charge q", "charge of"]):
-        r = _distance(text)
-        objects = [
-            {"id": "q1", "type": "charge", "role": "given", **_quantity(*q)},
-            {"id": "r1", "type": "distance", "role": "given", **_quantity(*r)},
-        ]
-        eps_r = _relative_permittivity_value(text)
-        if eps_r is not None:
-            objects.append({"id": "eps_r", "type": "relative_permittivity", "role": "given", "value": str(eps_r[0]), "unit": ""})
-        objects.append({"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"})
-        candidates.append(_schema("point_charge_electric_field", objects))
-
-    line_charge = _line_charge_density(text)
-    if line_charge is not None and _distance(text) is not None and _is_electric_field_query(low) and any(p in low for p in ["wire", "linear charge density", "λ", "lambda"]):
-        r = _distance(text)
-        candidates.append(
-            _schema(
-                "infinite_wire_electric_field",
-                [
-                    {"id": "lambda1", "type": "line_charge_density", "role": "given", **_quantity(*line_charge)},
-                    {"id": "r1", "type": "distance", "role": "given", **_quantity(*r)},
-                    {"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"},
-                ],
-            )
-        )
-
-    if mass is not None and q is not None and _is_electric_field_query(low) and "equilibrium" in low:
-        objects = [
-            {"id": "m1", "type": "mass", "role": "given", **_quantity(*mass)},
-            {"id": "q1", "type": "charge", "role": "given", **_quantity(*q)},
-        ]
-        g = _gravity(text)
-        if g is not None:
-            objects.append({"id": "g1", "type": "gravitational_acceleration", "role": "given", **_quantity(*g)})
-        objects.append({"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"})
-        candidates.append(_schema("equilibrium_electric_field", objects))
-
-    candidates.extend(fill_formula_specs(_quantity_inventory(text), _candidate_query_intent(low)))
+    candidates.extend(fill_formula_specs(_quantity_inventory(text), _candidate_query_intent(low), text=low))
 
     # Preserve order but deduplicate by a compact schema signature.
     out: list[dict[str, Any]] = []

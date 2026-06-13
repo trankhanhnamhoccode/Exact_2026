@@ -35,6 +35,8 @@ class FormulaSpec:
     query_type: str
     query_unit: str
     slots: tuple[FormulaSlot, ...]
+    trigger_any: tuple[str, ...] = ()
+    trigger_all: tuple[str, ...] = ()
 
 
 Inventory = Mapping[str, tuple[Quantity, ...]]
@@ -53,17 +55,18 @@ FORMULA_SPECS: tuple[FormulaSpec, ...] = (
         ),
     ),
     FormulaSpec(
-        name="point_charge_electric_field",
-        query_intent="electric_field",
-        query_id="E_query",
-        query_type="electric_field",
-        query_unit="V/m",
+        name="capacitor_charge_voltage",
+        query_intent="capacitance",
+        query_id="C_query",
+        query_type="capacitance",
+        query_unit="uF",
         slots=(
-            FormulaSlot("q1", "charge"),
-            FormulaSlot("r1", "distance"),
-            FormulaSlot("eps_r", "relative_permittivity", required=False),
+            FormulaSlot("Q1", "charge"),
+            FormulaSlot("U1", "voltage"),
         ),
     ),
+    # Put F = |q|E before point-charge field: force data is usually more
+    # direct than inferring E from the source charge when both are present.
     FormulaSpec(
         name="electric_force_field",
         query_intent="electric_field",
@@ -96,6 +99,44 @@ FORMULA_SPECS: tuple[FormulaSpec, ...] = (
             FormulaSlot("q1", "charge"),
             FormulaSlot("E1", "electric_field"),
         ),
+    ),
+    FormulaSpec(
+        name="point_charge_electric_field",
+        query_intent="electric_field",
+        query_id="E_query",
+        query_type="electric_field",
+        query_unit="V/m",
+        slots=(
+            FormulaSlot("q1", "charge"),
+            FormulaSlot("r1", "distance"),
+            FormulaSlot("eps_r", "relative_permittivity", required=False),
+        ),
+        trigger_any=("point charge", "small sphere", "electric charge", "charge q", "charge of"),
+    ),
+    FormulaSpec(
+        name="infinite_wire_electric_field",
+        query_intent="electric_field",
+        query_id="E_query",
+        query_type="electric_field",
+        query_unit="V/m",
+        slots=(
+            FormulaSlot("lambda1", "line_charge_density"),
+            FormulaSlot("r1", "distance"),
+        ),
+        trigger_any=("wire", "linear charge density", "λ", "lambda"),
+    ),
+    FormulaSpec(
+        name="equilibrium_electric_field",
+        query_intent="electric_field",
+        query_id="E_query",
+        query_type="electric_field",
+        query_unit="V/m",
+        slots=(
+            FormulaSlot("m1", "mass"),
+            FormulaSlot("q1", "charge"),
+            FormulaSlot("g1", "gravity", object_type="gravitational_acceleration", required=False, default_value="10", default_unit="m/s2"),
+        ),
+        trigger_all=("equilibrium",),
     ),
 )
 
@@ -134,7 +175,16 @@ def _object_from_default(slot: FormulaSlot) -> dict:
     }
 
 
-def fill_formula_specs(inventory: Inventory, query_intent: str | None) -> list[dict]:
+def _matches_text(spec: FormulaSpec, text: str) -> bool:
+    low = text.lower()
+    if spec.trigger_all and not all(term.lower() in low for term in spec.trigger_all):
+        return False
+    if spec.trigger_any and not any(term.lower() in low for term in spec.trigger_any):
+        return False
+    return True
+
+
+def fill_formula_specs(inventory: Inventory, query_intent: str | None, *, text: str = "") -> list[dict]:
     """Generate equation schema candidates from declarative FormulaSpec entries."""
 
     if query_intent is None:
@@ -142,7 +192,7 @@ def fill_formula_specs(inventory: Inventory, query_intent: str | None) -> list[d
 
     candidates: list[dict] = []
     for spec in FORMULA_SPECS:
-        if spec.query_intent != query_intent:
+        if spec.query_intent != query_intent or not _matches_text(spec, text):
             continue
 
         objects: list[dict] = []
