@@ -170,3 +170,7 @@ def test_replay_dataset_runner_reports_trusted_accuracy_with_quality_flags(tmp_p
     assert report["trusted_accuracy"] == 1.0
     bad_result = next(item for item in report["results"] if item["case_id"] == "TD009_BAD_GOLD")
     assert bad_result["quality_reason"] == "Deliberately wrong test gold."
+
+
+def test_compare_answer_handles_fraction_times_pi_expected():
+    assert compare_answer("0.785398163397 rad", "1/4 \\pi", expected_unit="rad") is True

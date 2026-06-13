@@ -17,6 +17,8 @@ def _norm(text: str) -> str:
         .replace("µ", "u")
         .replace("μ", "u")
     )
+    supers_with_sign = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺", "0123456789-+")
+    text = re.sub(r"10([⁻⁺]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+)", lambda m: "10^" + m.group(1).translate(supers_with_sign), text)
     supers = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")
     subs = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
     text = text.translate(supers).translate(subs)
@@ -166,6 +168,7 @@ def _distance(text: str) -> tuple[float, str] | None:
             rf"\bdistance\s+between\s+(?:the\s+)?(?:two\s+)?plates(?:\s+is|\s*=|\s+and[^,.]*?are)?\s*(?:d\s*=\s*)?(?P<value>{NUM})\s*{unit}\b",
             rf"\bd\s*=\s*(?P<value>{NUM})\s*{unit}\b",
             rf"\bdistance\s*(?:r|MO)?\s*(?:=|is|of)?\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\bseparated\s+by\s+(?:a\s+)?distance\s+of\s*(?P<value>{NUM})\s*{unit}\b",
             rf"\br\s*=\s*(?P<value>{NUM})\s*{unit}\b",
             rf"\b(?P<value>{NUM})\s*{unit}\s+away\s+from\b",
             rf"\bat\s+(?:a\s+)?point\s+(?P<value>{NUM})\s*{unit}\s+away\b",
@@ -177,7 +180,22 @@ def _distance(text: str) -> tuple[float, str] | None:
 
 
 def _is_charge_query(low: str) -> bool:
-    return any(p in low for p in ["calculate the charge", "what is the charge", "find the charge", "charge stored", "charge on", "charge accumulated", "maximum charge"])
+    return any(
+        p in low
+        for p in [
+            "calculate the charge",
+            "what is the charge",
+            "find the charge",
+            "charge stored",
+            "charge on",
+            "charge accumulated",
+            "maximum charge",
+            "magnitude of charge",
+            "sign and magnitude of q",
+            "find q1",
+            "find q2",
+        ]
+    )
 
 
 def _is_energy_query(low: str) -> bool:
@@ -251,7 +269,7 @@ def _electric_field_given(text: str) -> tuple[float, str] | None:
     return _find_quantity(
         [
             rf"\bE\s*=\s*(?P<value>{NUM})\s*{unit}\b",
-            rf"\belectric\s+field(?:\s+strength)?(?:\s+E)?(?:\s+of|\s+is|\s*=|\s+with\s+(?:a\s+)?magnitude\s+of)?\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\belectric\s+field(?:\s+strength)?(?:\s+E)?(?:\s+of|\s+is|\s*=|\s+has\s+(?:a\s+)?magnitude\s+of|\s+with\s+(?:a\s+)?magnitude\s+of)?\s*(?P<value>{NUM})\s*{unit}\b",
             rf"\bfield\s+strength(?:\s+E)?(?:\s+of|\s+is|\s*=)?\s*(?P<value>{NUM})\s*{unit}\b",
         ],
         text,
@@ -261,7 +279,7 @@ def _electric_field_given(text: str) -> tuple[float, str] | None:
 def _relative_permittivity_value(text: str) -> tuple[float, str] | None:
     return _find_quantity(
         [
-            rf"\b(?:dielectric\s+constant|relative\s+permittivity|epsilon|eps|ε)\s*(?:=|is|of)?\s*(?P<value>{NUM})\s*(?P<unit>)",
+            rf"\b(?:dielectric\s+constant|relative\s+permittivity|epsilon|eps|ε)(?:\s+of\s+[^,.]+?)?\s*(?:=|is|of)?\s*(?P<value>{NUM})\s*(?P<unit>)",
         ],
         text,
     )
@@ -333,6 +351,235 @@ def _two_charge_zero_field_candidate(text: str, low: str) -> dict[str, Any] | No
             {"id": "x_query", "type": "distance", "role": "query", "value": None, "unit": _unit(distance_unit), "reference": reference},
         ],
         constraints=["Model A and B on a 1D line and solve the point where the two electric-field magnitudes cancel."],
+    )
+
+
+def _common_distance_to_m(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>cm|mm|m)"
+    return _find_quantity(
+        [
+            rf"\beach\s+is\s+(?P<value>{NUM})\s*{unit}\s+from\s+point\s+M\b",
+            rf"\beach\s+located\s+(?P<value>{NUM})\s*{unit}\s+from\s+point\s+M\b",
+            rf"\beach\s+located\s+(?P<value>{NUM})\s*{unit}\s+from\s+M\b",
+            rf"\bare\s+each\s+located\s+(?P<value>{NUM})\s*{unit}\s+from\s+point\s+M\b",
+            rf"\bare\s+each\s+located\s+(?P<value>{NUM})\s*{unit}\s+from\s+M\b",
+            rf"\beach\s+(?:is\s+)?located\s+(?P<value>{NUM})\s*{unit}\s+away\s+from\s+point\s+M\b",
+            rf"\bare\s+each\s+(?P<value>{NUM})\s*{unit}\s+from\s+point\s+M\b",
+            rf"\bboth\s+points\s+are\s+(?P<value>{NUM})\s*{unit}\s+away\s+from\s+(?:a\s+)?(?:central\s+)?point\s+M\b",
+            rf"\bboth\s+located\s+(?P<value>{NUM})\s*{unit}\s+away\s+from\s+point\s+M\b",
+            rf"\bboth\s+located\s+(?P<value>{NUM})\s*{unit}\s+away\s+from\s+M\b",
+            rf"\bare\s+both\s+located\s+(?P<value>{NUM})\s*{unit}\s+away\s+from\s+point\s+M\b",
+            rf"\bare\s+both\s+(?:located\s+)?(?P<value>{NUM})\s*{unit}\s+away\s+from\s+point\s+M\b",
+            rf"\bare\s+located\s+(?P<value>{NUM})\s*{unit}\s+from\s+M\b",
+            rf"\bare\s+located\s+(?P<value>{NUM})\s*{unit}\s+from\s+point\s+M\b",
+            rf"\bare\s+located\s+such\s+that\s+each\s+is\s+(?P<value>{NUM})\s*{unit}\s+away\s+from\s+point\s+M\b",
+            rf"\bare\s+placed\s+such\s+that\s+each\s+is\s+(?P<value>{NUM})\s*{unit}\s+from\s+point\s+M\b",
+            rf"\bare\s+placed\s+such\s+that\s+each\s+is\s+(?P<value>{NUM})\s*{unit}\s+away\s+from\s+point\s+M\b",
+        ],
+        text,
+    )
+
+
+def _field_vector_angle(text: str, low: str) -> tuple[float, str] | None:
+    if "perpendicular" in low:
+        return (90.0, "degree")
+    m = re.search(r"\b(?P<angle>60|90)\s*(?:°|degrees?)", text, flags=re.I)
+    if m:
+        return (float(m.group("angle")), "degree")
+    return None
+
+
+def _two_field_vector_resultant_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if not _is_electric_field_query(low):
+        return None
+    if not any(p in low for p in ["resultant electric field", "resultant field", "total electric field", "net electric field"]):
+        return None
+    angle = _field_vector_angle(text, low)
+    distance = _common_distance_to_m(text)
+    charges = _two_charge_values_for_zero_field(text, low)
+    if angle is None or distance is None or charges is None:
+        return None
+    q1, q2 = charges
+    return _schema(
+        "two_field_vector_resultant",
+        [
+            {"id": "q1", "type": "charge", "role": "given", **_quantity(*q1)},
+            {"id": "q2", "type": "charge", "role": "given", **_quantity(*q2)},
+            {"id": "r1", "type": "distance", "role": "given", **_quantity(*distance)},
+            {"id": "theta", "type": "angle", "role": "given", **_quantity(*angle)},
+            {"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"},
+        ],
+        constraints=["Compute each field magnitude and combine by the angle between the field vectors."],
+    )
+
+
+def _point_charge_inverse_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if not _is_charge_query(low):
+        return None
+    field = _electric_field_given(text)
+    distance = _distance(text)
+    if field is None or distance is None:
+        return None
+    if not any(p in low for p in ["point charge", "charge q", "magnitude of q", "sign and magnitude"]):
+        return None
+    eps = _relative_permittivity_value(text) or (1.0, "")
+    sign = -1 if any(p in low for p in ["towards the charge", "toward the charge", "directed towards", "points towards"]) else 1
+    return _schema(
+        "point_charge_electric_field",
+        [
+            {"id": "E1", "type": "electric_field", "role": "given", **_quantity(*field)},
+            {"id": "r1", "type": "distance", "role": "given", **_quantity(*distance)},
+            {"id": "eps_r", "type": "relative_permittivity", "role": "constant", **_quantity(*eps)},
+            {"id": "q_query", "type": "charge", "role": "query", "value": None, "unit": "C", "sign": sign},
+        ],
+        constraints=["Infer charge sign from field direction when stated; otherwise solve magnitude."],
+    )
+
+
+def _coulomb_unknown_charge_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if not _is_charge_query(low):
+        return None
+    known_q = _charge(text)
+    force = _force(text)
+    distance = _distance(text)
+    if known_q is None or force is None or distance is None:
+        return None
+    if not any(p in low for p in ["point charge q", "charge q", "magnitude of charge q", "magnitude of charge q,"]):
+        return None
+    return _schema(
+        "coulomb_force_two_charges",
+        [
+            {"id": "q_known", "type": "charge", "role": "given", **_quantity(*known_q)},
+            {"id": "F1", "type": "force", "role": "given", **_quantity(*force)},
+            {"id": "r1", "type": "distance", "role": "given", **_quantity(*distance)},
+            {"id": "Q_query", "type": "charge", "role": "query", "value": None, "unit": "C"},
+        ],
+    )
+
+
+def _charge_sum(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>pC|nC|uC|mC|C|coulombs?)"
+    return _find_quantity(
+        [rf"\bq\s*1\s*\+\s*q\s*2\s*=\s*(?P<value>{NUM})\s*{unit}\b"],
+        text,
+    )
+
+
+def _distances_from_q1_q2(text: str) -> tuple[tuple[float, str], tuple[float, str]] | None:
+    unit_pat = r"(?:cm|mm|m)"
+    patterns = [
+        rf"(?P<r1>{NUM})\s*(?P<u1>{unit_pat})\s+from\s+q\s*1\s+and\s+(?P<r2>{NUM})\s*(?P<u2>{unit_pat})\s+from\s+q\s*2",
+        rf"(?P<r1>{NUM})\s*(?P<u1>{unit_pat})\s+from\s+q1\s+and\s+(?P<r2>{NUM})\s*(?P<u2>{unit_pat})\s+from\s+q2",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, text, flags=re.I)
+        if m:
+            return (_parse_number(m.group("r1")), _unit(m.group("u1"))), (_parse_number(m.group("r2")), _unit(m.group("u2")))
+    return None
+
+
+def _zero_field_unknown_charges_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "e = 0" not in low and "field strength is e = 0" not in low and "net electric field strength is e = 0" not in low:
+        return None
+    total = _charge_sum(text)
+    distances = _distances_from_q1_q2(text)
+    if total is None or distances is None:
+        return None
+    query_id = "q2_query" if re.search(r"\bfind\s+q\s*2\b", text, flags=re.I) else "q1_query"
+    query_symbol = "q2" if query_id.startswith("q2") else "q1"
+    return _schema(
+        "two_charge_zero_field_unknown_charges",
+        [
+            {"id": "q_sum", "type": "charge_sum", "role": "given", **_quantity(*total)},
+            {"id": "r1", "type": "distance", "role": "given", **_quantity(*distances[0])},
+            {"id": "r2", "type": "distance", "role": "given", **_quantity(*distances[1])},
+            {"id": query_id, "type": "charge", "role": "query", "value": None, "unit": "C", "symbol": query_symbol},
+        ],
+    )
+
+
+def _point_charge_scaling_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "replaced by" not in low or "halved" not in low or not _is_electric_field_query(low):
+        return None
+    charge_factor = 2.0 if re.search(r"replaced\s+by\s+-?\s*2\s*q", text, flags=re.I) else None
+    distance_factor = 0.5 if "distance" in low and "halved" in low else None
+    if charge_factor is None or distance_factor is None:
+        return None
+    return _schema(
+        "point_charge_field_scaling",
+        [
+            {"id": "charge_factor", "type": "charge_factor", "role": "given", "value": str(charge_factor), "unit": "times"},
+            {"id": "distance_factor", "type": "distance_factor", "role": "given", "value": str(distance_factor), "unit": "times"},
+            {"id": "E_ratio_query", "type": "ratio", "role": "query", "value": None, "unit": "times", "symbol": "E2/E1"},
+        ],
+    )
+
+
+def _electric_pendulum_angle_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "angle" not in low or "suspended" not in low or "electric field" not in low:
+        return None
+    mass = _mass(text)
+    charge = _charge(text)
+    field = _electric_field_given(text)
+    if mass is None or charge is None or field is None:
+        return None
+    g = _gravity(text) or (10.0, "m/s2")
+    return _schema(
+        "electric_pendulum_deflection_angle",
+        [
+            {"id": "m1", "type": "mass", "role": "given", **_quantity(*mass)},
+            {"id": "q1", "type": "charge", "role": "given", **_quantity(*charge)},
+            {"id": "E1", "type": "electric_field", "role": "given", **_quantity(*field)},
+            {"id": "g1", "type": "gravitational_acceleration", "role": "constant", **_quantity(*g)},
+            {"id": "theta_query", "type": "angle", "role": "query", "value": None, "unit": "rad"},
+        ],
+    )
+
+
+def _dielectric_field_scaling_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "dielectric" not in low or not _is_electric_field_query(low):
+        return None
+    field = _electric_field_given(text)
+    eps = _relative_permittivity_value(text)
+    if field is None or eps is None:
+        return None
+    if not any(p in low for p in ["new electric field", "what will be", "surrounds"]):
+        return None
+    return _schema(
+        "dielectric_field_scaling",
+        [
+            {"id": "E_air", "type": "electric_field", "role": "given", **_quantity(*field)},
+            {"id": "eps_r", "type": "relative_permittivity", "role": "given", **_quantity(*eps)},
+            {"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"},
+        ],
+    )
+
+
+def _field_pair_values(text: str) -> tuple[tuple[float, str], tuple[float, str]] | None:
+    unit_pat = r"(?:V\s*/\s*m|N\s*/\s*C)"
+    m = re.search(
+        rf"point\s+A\s+is\s+(?P<ea>{NUM})\s*(?P<ua>{unit_pat}).*?point\s+B\s+is\s+(?P<eb>{NUM})\s*(?P<ub>{unit_pat})",
+        text,
+        flags=re.I | re.S,
+    )
+    if not m:
+        return None
+    return (_parse_number(m.group("ea")), _unit(m.group("ua"))), (_parse_number(m.group("eb")), _unit(m.group("ub")))
+
+
+def _midpoint_field_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "midpoint" not in low or not _is_electric_field_query(low):
+        return None
+    fields = _field_pair_values(text)
+    if fields is None:
+        return None
+    return _schema(
+        "midpoint_field_from_two_field_values",
+        [
+            {"id": "E_A", "type": "electric_field", "role": "given", **_quantity(*fields[0])},
+            {"id": "E_B", "type": "electric_field", "role": "given", **_quantity(*fields[1])},
+            {"id": "E_M_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"},
+        ],
     )
 
 
@@ -420,9 +667,19 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
     low = text.lower()
     candidates: list[dict[str, Any]] = []
 
-    zero_field_candidate = _two_charge_zero_field_candidate(text, low)
-    if zero_field_candidate is not None:
-        candidates.append(zero_field_candidate)
+    for special in (
+        _two_charge_zero_field_candidate(text, low),
+        _zero_field_unknown_charges_candidate(text, low),
+        _two_field_vector_resultant_candidate(text, low),
+        _point_charge_inverse_candidate(text, low),
+        _coulomb_unknown_charge_candidate(text, low),
+        _point_charge_scaling_candidate(text, low),
+        _electric_pendulum_angle_candidate(text, low),
+        _dielectric_field_scaling_candidate(text, low),
+        _midpoint_field_candidate(text, low),
+    ):
+        if special is not None:
+            candidates.append(special)
 
     c = _capacitance(text)
     u = _voltage(text)

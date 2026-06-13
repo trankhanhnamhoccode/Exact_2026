@@ -157,6 +157,12 @@ def _first_number(value: str | None) -> float | None:
     if not text:
         return None
 
+    frac_pi = re.fullmatch(r"\s*([-+]?\d+(?:\.\d+)?)\s*/\s*([-+]?\d+(?:\.\d+)?)\s*(?:x\s*)?(?:\\?pi)\s*", text)
+    if frac_pi:
+        denominator = float(frac_pi.group(2))
+        if denominator != 0:
+            return float(frac_pi.group(1)) / denominator * math.pi
+
     frac = _FRACTION_RE.match(text)
     if frac:
         denominator = float(frac.group(2))
