@@ -50,11 +50,17 @@ def _intent_score(problem: str, schema: dict[str, Any]) -> float:
     qtypes = _query_types(schema)
     score = 0.0
 
+    asks_voltage = any(p in low for p in ["calculate the voltage", "find the voltage", "determine the voltage", "what is the voltage"])
+    asks_charge = "charge" in low and any(p in low for p in ["calculate", "what", "find", "stored", "accumulated", "maximum"]) and not asks_voltage
+    asks_capacitance = "capacitance" in low and any(p in low for p in ["calculate", "what", "find", "determine"]) and not asks_voltage
+
+    if asks_voltage:
+        score += 60 if "voltage" in qtypes else -80
     if any(p in low for p in ["dielectric constant", "relative permittivity", "permittivity"]):
         score += 40 if "relative_permittivity" in qtypes else -90
-    if "charge" in low and any(p in low for p in ["calculate", "what", "find", "stored", "accumulated", "maximum"]):
+    if asks_charge:
         score += 25 if "charge" in qtypes else -35
-    if "capacitance" in low and any(p in low for p in ["calculate", "what", "find", "determine"]):
+    if asks_capacitance:
         if not any(p in low for p in ["dielectric constant", "relative permittivity"]):
             score += 25 if "capacitance" in qtypes else -35
     if "energy" in low:
