@@ -512,6 +512,32 @@ FORMULA_DOCS: list[FormulaDoc] = [
         ),
     ),
     FormulaDoc(
+        id="capacitor_energy_charge_capacitance",
+        name="Capacitor energy from charge and capacitance",
+        equation="W = Q^2/(2 C)",
+        description="Use for scalar capacitor energy when charge and capacitance are known, or inverse queries for charge/capacitance from energy.",
+        quantity_types=["energy", "charge", "capacitance"],
+        query_types=["energy", "charge", "capacitance"],
+        tags=["capacitor", "energy", "charge", "capacitance"],
+        keywords=[
+            "energy stored",
+            "electric field energy",
+            "charge and capacitance",
+            "given charge and capacitance",
+            "Q squared over 2C",
+            "Q^2/(2C)",
+            "without voltage",
+        ],
+        schema_template=_schema(
+            "capacitor_energy_charge_capacitance",
+            [
+                {"id": "Q1", "type": "charge", "role": "given", "value": "<number>", "unit": "<C|mC|uC|nC>"},
+                {"id": "C1", "type": "capacitance", "role": "given", "value": "<number>", "unit": "<F|uF|nF|pF>"},
+                {"id": "W_query", "type": "energy", "role": "query", "value": None, "unit": "<J|mJ|uJ>"},
+            ],
+        ),
+    ),
+    FormulaDoc(
         id="parallel_plate_capacitance_distance_scaling",
         name="Parallel-plate capacitance scaling from plate separation",
         equation="C2/C1 = d1/d2",

@@ -582,6 +582,56 @@ def _solve_capacitor_energy_charge_voltage(schema: dict[str, Any], formula: str)
     return result
 
 
+
+def _solve_capacitor_energy_charge_capacitance(schema: dict[str, Any], formula: str) -> SolveResult:
+    """Solve W = Q^2/(2C), including inverse forms.
+
+    This is intentionally separate from W=1/2*C*U^2 and W=1/2*Q*U because many
+    dataset items give charge and capacitance but no voltage. If the LLM tries
+    to invent a missing voltage intermediate, the formula portfolio can still
+    pick this direct relation from the available object types.
+    """
+    w_query = _query_obj(schema, "energy")
+    q_query = _query_obj(schema, "charge")
+    c_query = _query_obj(schema, "capacitance")
+
+    try:
+        if w_query is not None:
+            q = _required_si(schema, "charge", "C")
+            c = _required_si(schema, "capacitance", "F")
+            if c == 0:
+                return _fail("Capacitance must be non-zero when solving energy.", formula)
+            value = q * q / (2 * c)
+            query = w_query
+            quantity_type = "energy"
+            default_unit = "J"
+        elif q_query is not None:
+            w = _required_si(schema, "energy", "J")
+            c = _required_si(schema, "capacitance", "F")
+            value = math.sqrt(max(0.0, 2 * w * c))
+            query = q_query
+            quantity_type = "charge"
+            default_unit = "C"
+        elif c_query is not None:
+            q = _required_si(schema, "charge", "C")
+            w = _required_si(schema, "energy", "J")
+            if w == 0:
+                return _fail("Energy must be non-zero when solving capacitance.", formula)
+            value = q * q / (2 * w)
+            query = c_query
+            quantity_type = "capacitance"
+            default_unit = "F"
+        else:
+            return _fail("No supported query object for W = Q^2/(2C).", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use capacitor energy formula W = Q^2/(2*C).")
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
 def _solve_parallel_plate_capacitance(schema: dict[str, Any], formula: str) -> SolveResult:
     c_query = _query_obj(schema, "capacitance")
     eps_query = _query_obj(schema, ("relative_permittivity", "dielectric_constant"))
@@ -2657,6 +2707,8 @@ def _compatible_formula_names_from_objects(schema: dict[str, Any]) -> list[str]:
             add("capacitor_energy_charge_voltage")
         add("capacitor_charge_voltage")
     if has_q and has_c:
+        if has_w or _has_query_type(schema, "energy"):
+            add("capacitor_energy_charge_capacitance")
         add("capacitor_charge_voltage")
 
     # Parallel-plate capacitor / field / density.
@@ -2840,6 +2892,10 @@ def _canonical_formula(schema: dict[str, Any], formula: str) -> str:
         "capacitor_energy_charge_voltage": "capacitor_energy_charge_voltage",
         "capacitor_energy_charge_voltage_formula": "capacitor_energy_charge_voltage",
         "energy_from_charge_voltage": "capacitor_energy_charge_voltage",
+        "capacitor_energy_charge_capacitance": "capacitor_energy_charge_capacitance",
+        "energy_from_charge_capacitance": "capacitor_energy_charge_capacitance",
+        "capacitor_energy_from_charge_capacitance": "capacitor_energy_charge_capacitance",
+        "energy_charge_capacitance": "capacitor_energy_charge_capacitance",
         "parallel_plate_capacitance_distance_scaling": "parallel_plate_capacitance_distance_scaling",
         "capacitance_distance_scaling": "parallel_plate_capacitance_distance_scaling",
         "plate_separation_capacitance_scaling": "parallel_plate_capacitance_distance_scaling",
@@ -2918,6 +2974,11 @@ def _canonical_formula(schema: dict[str, Any], formula: str) -> str:
                 if _query_obj(schema, "energy") is not None:
                     return "capacitor_energy_voltage"
 
+    # If final query is energy and Q + C are given, prefer direct W = Q^2/(2C) even if the LLM emitted a missing voltage intermediate.
+    if _query_obj(schema, "energy") is not None and _given_obj(schema, "charge") is not None and _given_obj(schema, "capacitance") is not None and _given_obj(schema, "voltage") is None:
+        if key in {"capacitor_charge_voltage", "capacitor_energy_voltage", "capacitor_energy_charge_voltage", "capacitor_energy_charge_capacitance"}:
+            return "capacitor_energy_charge_capacitance"
+
     # If final query is energy and Q + U are given, prefer direct W = 1/2 Q U even if the LLM emitted an intermediate C_query.
     if _query_obj(schema, "energy") is not None and _given_obj(schema, "charge") is not None and _given_obj(schema, "voltage") is not None:
         if key in {"capacitor_charge_voltage", "capacitor_energy_voltage", "capacitor_energy_charge_voltage"}:
@@ -2939,6 +3000,7 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "capacitor_charge_voltage": _solve_capacitor_charge_voltage,
         "capacitor_energy_voltage": _solve_capacitor_energy_voltage,
         "capacitor_energy_charge_voltage": _solve_capacitor_energy_charge_voltage,
+        "capacitor_energy_charge_capacitance": _solve_capacitor_energy_charge_capacitance,
         "parallel_plate_capacitance": _solve_parallel_plate_capacitance,
         "parallel_plate_capacitance_distance_scaling": _solve_parallel_plate_capacitance_distance_scaling,
         "parallel_plate_charge_from_voltage": _solve_parallel_plate_charge_from_voltage,

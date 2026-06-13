@@ -209,6 +209,15 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
     if "lc" in text and "energy" in text and ("time" in text or "omega" in text or "cos" in text):
         add("lc_electric_energy_time", 4.5)
 
+    if (
+        ("capacitor" in text or "capacitance" in text)
+        and ("energy" in text or "electric field energy" in text or "stored energy" in text)
+        and ("charge" in text or re.search(r"\bq\b", text))
+        and ("capacitance" in text or re.search(r"\bc\s*=", text))
+        and not ("voltage" in text or "potential difference" in text)
+    ):
+        add("capacitor_energy_charge_capacitance", 7.0)
+
     if "capacitor" in text and "energy" in text and "charge" in text and ("voltage" in text or "potential difference" in text):
         add("capacitor_energy_charge_voltage", 5.5)
 
