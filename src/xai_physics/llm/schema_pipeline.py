@@ -10,6 +10,8 @@ from xai_physics.llm.prompt_builder import PromptBuildResult, build_schema_promp
 from xai_physics.schema_solver import solve_schema
 from xai_physics.domains.electrostatics.text_extractor import extract_electrostatics_schema_from_text
 from xai_physics.domains.equations.text_extractor import extract_equations_schema_from_text
+from xai_physics.hybrid.candidate_ranker import SchemaCandidate, select_best_candidate
+from xai_physics.hybrid.equations_candidates import generate_equations_candidate_schemas
 
 
 
@@ -55,6 +57,72 @@ def _attach_formula_candidates(schema: dict[str, Any], prompt_result: PromptBuil
             merged.append(value)
 
     schema["formula_candidates"] = merged
+
+
+def _equations_hybrid_candidates(
+    problem: str,
+    prompt_result: PromptBuildResult,
+    *,
+    llm_schema: dict[str, Any] | None = None,
+    deterministic_schema: dict[str, Any] | None = None,
+) -> list[SchemaCandidate]:
+    """Build equations schema candidates from deterministic and LLM sources."""
+    candidates: list[SchemaCandidate] = []
+
+    if deterministic_schema is not None:
+        _attach_formula_candidates(deterministic_schema, prompt_result)
+        candidates.append(SchemaCandidate("deterministic_text", deterministic_schema))
+
+    for schema in generate_equations_candidate_schemas(problem):
+        _attach_formula_candidates(schema, prompt_result)
+        candidates.append(SchemaCandidate("formula_driven", schema))
+
+    if llm_schema is not None:
+        _attach_formula_candidates(llm_schema, prompt_result)
+        candidates.append(SchemaCandidate("llm_raw", llm_schema))
+
+    return candidates
+
+
+def _try_equations_hybrid_selection(
+    problem: str,
+    prompt_result: PromptBuildResult,
+    *,
+    raw_llm_output: str,
+    llm_schema: dict[str, Any] | None = None,
+    deterministic_schema: dict[str, Any] | None = None,
+) -> SchemaPipelineResult | None:
+    if prompt_result.domain_decision.domain != "equations":
+        return None
+
+    candidates = _equations_hybrid_candidates(
+        problem,
+        prompt_result,
+        llm_schema=llm_schema,
+        deterministic_schema=deterministic_schema,
+    )
+    if not candidates:
+        return None
+
+    selected = select_best_candidate(problem, candidates)
+    if selected is None:
+        return None
+
+    result = selected.solve_result
+    result.add_step("Prompt built", f"Domain: {prompt_result.domain_decision.domain}")
+    result.add_step(
+        "Hybrid schema candidate selected",
+        f"Selected {selected.candidate.source} with score {selected.score:.1f}.",
+        candidate_source=selected.candidate.source,
+        candidate_score=selected.score,
+        candidate_diagnostics=selected.diagnostics,
+    )
+    return SchemaPipelineResult(
+        solve_result=result,
+        prompt_result=prompt_result,
+        raw_llm_output=raw_llm_output,
+        schema=selected.candidate.schema,
+    )
 
 
 @dataclass(frozen=True)
@@ -107,6 +175,15 @@ def solve_problem_with_llm(
     try:
         schema = extract_json_object(raw_output)
     except ValueError as exc:
+        hybrid = _try_equations_hybrid_selection(
+            problem,
+            prompt_result,
+            raw_llm_output=raw_output,
+            deterministic_schema=deterministic_schema,
+        )
+        if hybrid is not None:
+            return hybrid
+
         if deterministic_schema is not None:
             _attach_formula_candidates(deterministic_schema, prompt_result)
             result = solve_schema(deterministic_schema)
@@ -135,6 +212,16 @@ def solve_problem_with_llm(
             raw_llm_output=raw_output,
             schema=None,
         )
+
+    hybrid = _try_equations_hybrid_selection(
+        problem,
+        prompt_result,
+        raw_llm_output=raw_output,
+        llm_schema=schema,
+        deterministic_schema=deterministic_schema,
+    )
+    if hybrid is not None:
+        return hybrid
 
     # Electrostatics is especially sensitive to small schema mistakes: Qwen often
     # emits Collinear where the text gives AB/AC/BC, or encodes electric-field
