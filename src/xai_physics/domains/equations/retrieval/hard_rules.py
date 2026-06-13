@@ -31,7 +31,10 @@ def detect_tags(problem: str) -> list[TagHit]:
         ("magnetic_field", 1.2, r"magnetic field|\bB\s*="),
         ("point_charge", 1.4, r"point charge"),
         ("electric_field", 1.2, r"electric field|\bE\s*="),
-        ("measurement_error", 1.5, r"relative error|percentage error|absolute error"),
+        ("measurement_error", 1.5, r"relative error|percentage error|percent relative|absolute error|least count|uncertainty|average absolute error|random error|maximum possible"),
+        ("least_count", 1.3, r"least count|smallest division"),
+        ("repeated_measurements", 1.2, r"average value|average absolute error|mean value|mean absolute error|repeated measurements|measurements were taken|readings"),
+        ("force", 1.2, r"attractive force|force between|force on"),
         ("time_domain", 1.2, r"instantaneous|at time|cos|sin|omega|angular frequency"),
     ]
 
@@ -49,20 +52,22 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
     def add(formula_id: str, score: float) -> None:
         scores[formula_id] = max(scores.get(formula_id, 0.0), score)
 
-    is_scaling_question = any(
-        phrase in text
-        for phrase in [
-            "how many times",
-            "by what factor",
-            "ratio",
-            "doubled",
-            "tripled",
-            "halved",
-            "constant voltage",
-            "constant capacitance",
-            "change",
-            "changes",
-        ]
+    is_scaling_question = (
+        any(
+            phrase in text
+            for phrase in [
+                "how many times",
+                "by what factor",
+                "doubled",
+                "tripled",
+                "halved",
+                "constant voltage",
+                "constant capacitance",
+                "change",
+                "changes",
+            ]
+        )
+        or re.search(r"\bratio\b", text) is not None
     )
 
     if (
@@ -98,8 +103,20 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
     if "electric field" in text and "point charge" in text:
         add("point_charge_electric_field", 5.0)
 
-    if "relative error" in text or "percentage error" in text:
-        add("percentage_relative_error", 5.0)
+    if "relative error" in text or "percentage error" in text or "percentage relative" in text or "percent relative" in text:
+        add("percentage_relative_error", 5.5)
+
+    if "maximum possible" in text or "maximum value" in text:
+        add("measurement_maximum", 6.0)
+
+    if "random error" in text:
+        add("random_error_half_range", 6.0)
+
+    if ("r = u/i" in text or "r=u/i" in text or "resistance r is calculated" in text) and ("±" in text or "+/-" in text or "uncertainty" in text):
+        add("resistance_uncertainty_quotient", 6.0)
+
+    if ("power" in text or "p = ui" in text or "p=ui" in text) and ("voltage" in text or "u" in text) and ("current" in text or "i" in text) and ("±" in text or "+/-" in text or "uncertainty" in text or "relative error" in text):
+        add("power_uncertainty_product", 6.0)
 
     if ("instantaneous current" in text or "current at time" in text) and ("cos" in text or "omega" in text or "angular frequency" in text):
         add("harmonic_current_cos_time", 5.0)
@@ -110,11 +127,36 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
     if "energy density" in text and ("capacitor" in text or "electric field" in text or "between plates" in text):
         add("capacitor_energy_density", 5.0)
 
+    # Important wording trap: many textbook translations say "electric field energy"
+    # for the stored energy of a capacitor, not energy density.
+    if "electric field energy" in text and "capacitor" in text and "energy density" not in text:
+        add("capacitor_energy_voltage", 6.0)
+
     if "constant voltage" in text and "energy" in text and ("capacitance" in text or "capacitor" in text):
         add("capacitor_energy_scaling_constant_voltage", 5.0)
 
     if "constant capacitance" in text and "energy" in text and "voltage" in text:
         add("capacitor_energy_voltage_scaling_constant_capacitance", 5.0)
+
+    # Voltage-ratio scaling trap:
+    # "electric field energy" often triggers ordinary capacitor energy, but if the
+    # question asks how many times/by what factor after voltage is doubled/tripled/etc.,
+    # the correct schema should use U_ratio and W_ratio_query.
+    has_voltage_ratio_change = (
+        re.search(r"(?:voltage|potential difference|\bu\b).{0,40}(?:doubled|tripled|halved|increases|decreases|increased|decreased|multiplied)", text)
+        is not None
+        or re.search(r"(?:doubled|tripled|halved).{0,40}(?:voltage|potential difference|\bu\b)", text)
+        is not None
+    )
+    if (
+        is_scaling_question
+        and has_voltage_ratio_change
+        and ("constant voltage" not in text)
+        and ("capacitor" in text or "capacitance" in text)
+        and ("energy" in text or "stored" in text or "electric field energy" in text)
+        and "energy density" not in text
+    ):
+        add("capacitor_energy_voltage_scaling_constant_capacitance", 8.0)
 
     if "inductor" in text and ("energy" in text or "magnetic energy" in text):
         add("inductor_energy", 5.0)
@@ -133,5 +175,26 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
 
     if "lc" in text and "energy" in text and ("time" in text or "omega" in text or "cos" in text):
         add("lc_electric_energy_time", 4.5)
+
+    if "capacitor" in text and "energy" in text and "charge" in text and ("voltage" in text or "potential difference" in text):
+        add("capacitor_energy_charge_voltage", 5.5)
+
+    if ("distance" in text or "separation" in text) and ("halved" in text or "doubled" in text) and "capacitance" in text:
+        add("parallel_plate_capacitance_distance_scaling", 5.5)
+
+    if ("attractive force" in text or "force between" in text) and "plate" in text and ("charge" in text or "q" in text) and ("area" in text or "s =" in text):
+        add("capacitor_plate_force_by_charge_area", 5.5)
+
+    if "least count" in text and "absolute error" in text:
+        add("instrument_absolute_error", 5.5)
+
+    if "average absolute error" in text or "average value" in text or "mean value" in text:
+        add("measurement_average", 5.5)
+
+    if ("is" in text and "resonance" in text) or "in resonance at" in text:
+        add("resonance_check", 5.5)
+
+    if "parallel" in text and ("resistance" in text or "resistor" in text or "branches" in text):
+        add("parallel_resistance", 5.5)
 
     return scores

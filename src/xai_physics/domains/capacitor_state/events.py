@@ -91,10 +91,30 @@ class DistanceScale:
     def apply(self, state: CapacitorState) -> str:
         state.infer_missing()
 
-        if state.capacitance_F is None:
-            raise ValueError("Cannot scale plate distance because capacitance is unknown.")
-
         old_Q = state.charge_C
+        old_V = state.voltage_V
+
+        if state.capacitance_F is None:
+            # Relative-only benchmark rows often give voltage but not capacitance.
+            # For d -> factor*d, C -> C/factor. If disconnected, Q is conserved,
+            # so V -> factor*V. If connected, the source keeps V fixed.
+            if state.connected_to_source:
+                state.charge_C = None
+                return (
+                    f"Plate distance scaled by {self.factor:g}. "
+                    "Capacitance changes by an unknown absolute amount, but because the capacitor "
+                    "is connected to a source, voltage stays fixed."
+                )
+            if old_V is not None:
+                state.voltage_V = old_V * self.factor
+                state.charge_C = old_Q
+                return (
+                    f"Plate distance scaled by {self.factor:g}. "
+                    "Capacitance is unknown, but for a disconnected capacitor Q is conserved, "
+                    "so voltage scales in proportion to plate distance."
+                )
+            raise ValueError("Cannot scale plate distance because capacitance and voltage are unknown.")
+
         state.capacitance_F = state.capacitance_F / self.factor
 
         if state.connected_to_source:
@@ -123,10 +143,29 @@ class AreaScale:
     def apply(self, state: CapacitorState) -> str:
         state.infer_missing()
 
-        if state.capacitance_F is None:
-            raise ValueError("Cannot scale plate area because capacitance is unknown.")
-
         old_Q = state.charge_C
+        old_V = state.voltage_V
+
+        if state.capacitance_F is None:
+            # For A -> factor*A, C -> factor*C. If disconnected, Q is conserved,
+            # so V -> V/factor. If connected, the source keeps V fixed.
+            if state.connected_to_source:
+                state.charge_C = None
+                return (
+                    f"Plate area scaled by {self.factor:g}. "
+                    "Capacitance changes by an unknown absolute amount, but because the capacitor "
+                    "is connected to a source, voltage stays fixed."
+                )
+            if old_V is not None:
+                state.voltage_V = old_V / self.factor
+                state.charge_C = old_Q
+                return (
+                    f"Plate area scaled by {self.factor:g}. "
+                    "Capacitance is unknown, but for a disconnected capacitor Q is conserved, "
+                    "so voltage scales inversely with plate area."
+                )
+            raise ValueError("Cannot scale plate area because capacitance and voltage are unknown.")
+
         state.capacitance_F = state.capacitance_F * self.factor
 
         if state.connected_to_source:
@@ -183,6 +222,78 @@ class ConnectToInductor:
         cap.infer_missing()
         return cap
 
+
+
+@dataclass
+class ReplaceCapacitor:
+    """
+    Replace the capacitor by another capacitor with a new capacitance.
+
+    Physical effect:
+    - The capacitance is set to the new capacitance.
+    - If hold_policy is "voltage" or the capacitor is connected to a source, voltage is conserved.
+    - If hold_policy is "charge" or the capacitor is disconnected, charge is conserved.
+
+    This is intentionally different from ReplaceDielectric: it is for wording like
+    "replaced by another capacitor with capacitance ...", not dielectric material changes.
+    """
+
+    new_capacitance_F: float
+    hold_policy: str = "auto"
+    name: str = "replace_capacitor"
+
+    def apply(self, state: CapacitorState) -> str:
+        state.infer_missing()
+
+        old_Q = state.charge_C
+        old_V = state.voltage_V
+        policy = (self.hold_policy or "auto").lower().strip()
+
+        if self.new_capacitance_F <= 0:
+            raise ValueError("new capacitance must be positive.")
+
+        state.capacitance_F = self.new_capacitance_F
+
+        hold_voltage = policy in {
+            "voltage",
+            "constant_voltage",
+            "same_voltage",
+            "fixed_voltage",
+            "source",
+        } or (policy == "auto" and state.connected_to_source)
+
+        hold_charge = policy in {
+            "charge",
+            "constant_charge",
+            "same_charge",
+            "fixed_charge",
+            "isolated",
+            "disconnected",
+        } or (policy == "auto" and not state.connected_to_source)
+
+        if hold_voltage:
+            if old_V is None:
+                raise ValueError("Cannot replace capacitor at constant voltage because voltage is unknown.")
+            state.voltage_V = old_V
+            state.charge_C = None
+            state.infer_missing()
+            return (
+                f"Replaced capacitor {state.id} with C={self.new_capacitance_F:g} F. "
+                "Voltage is kept constant, so charge and energy are recomputed."
+            )
+
+        if hold_charge:
+            if old_Q is None:
+                raise ValueError("Cannot replace capacitor at constant charge because charge is unknown.")
+            state.charge_C = old_Q
+            state.voltage_V = None
+            state.infer_missing()
+            return (
+                f"Replaced capacitor {state.id} with C={self.new_capacitance_F:g} F. "
+                "Charge is kept constant, so voltage and energy are recomputed."
+            )
+
+        raise ValueError(f"Unsupported ReplaceCapacitor hold policy: {self.hold_policy!r}")
 
 
 class ReplaceDielectric:

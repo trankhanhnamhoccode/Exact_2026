@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from xai_physics.domains.capacitor_state.retrieval.types import (
     RetrievedExample,
@@ -13,6 +13,9 @@ IMPORTANT_TAGS = {
     "charge_redistribution",
     "distance_scale",
     "area_scale",
+    "replace_capacitor",
+    "energy_reduction_query",
+    "constant_voltage",
 }
 
 

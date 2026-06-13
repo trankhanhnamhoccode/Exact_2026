@@ -217,4 +217,47 @@ def apply_hard_rules(problem: str) -> list[TagHit]:
             evidence="percentage is a ratio query",
         )
 
+
+    if (
+        ("replace" in text or "replaced" in text)
+        and "capacitor" in text
+        and "another" in text
+        and "dielectric" not in text
+        and "permittivity" not in text
+    ):
+        add(
+            tag="replace_capacitor",
+            source="hard_rule",
+            score=1.20,
+            evidence="capacitor replacement language, not dielectric replacement",
+        )
+        add(
+            tag="capacitance_change",
+            source="hard_rule",
+            score=1.05,
+            evidence="new capacitor capacitance changes the state",
+        )
+
+    if (
+        ("reduction in energy" in text or "energy reduction" in text or "decrease in energy" in text)
+        and "capacitor" in text
+    ):
+        add(
+            tag="energy_reduction_query",
+            source="hard_rule",
+            score=1.10,
+            evidence="question asks for absolute energy reduction",
+        )
+
+    if (
+        ("same voltage" in text or "maintaining the same voltage" in text or "voltage is kept" in text)
+        and "capacitor" in text
+    ):
+        add(
+            tag="constant_voltage",
+            source="hard_rule",
+            score=1.05,
+            evidence="replacement/change keeps voltage constant",
+        )
+
     return hits

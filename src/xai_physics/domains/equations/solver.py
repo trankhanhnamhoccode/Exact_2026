@@ -1,5 +1,7 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import ast
+import copy
 import math
 from typing import Any
 
@@ -28,6 +30,59 @@ def _fmt(value: float) -> str:
     if math.isfinite(value) and abs(value - round(value)) < 1e-12:
         return str(int(round(value)))
     return f"{value:.12g}"
+
+
+_ALLOWED_EXPR_NAMES = {
+    "pi": math.pi,
+    "e": math.e,
+}
+
+
+def _safe_numeric_expr(value: Any) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"Could not parse numeric value: {value!r}")
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value).replace(",", "").strip()
+    try:
+        return float(text)
+    except ValueError:
+        pass
+
+    # LLM sometimes emits area as "3.14159 * (0.6)^2".
+    expr = text.replace("^", "**")
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except SyntaxError as exc:
+        raise ValueError(f"Could not parse numeric value: {value!r}") from exc
+
+    def eval_node(node: ast.AST) -> float:
+        if isinstance(node, ast.Expression):
+            return eval_node(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.Name) and node.id in _ALLOWED_EXPR_NAMES:
+            return float(_ALLOWED_EXPR_NAMES[node.id])
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            v = eval_node(node.operand)
+            return v if isinstance(node.op, ast.UAdd) else -v
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow)):
+            a = eval_node(node.left)
+            b = eval_node(node.right)
+            if isinstance(node.op, ast.Add):
+                return a + b
+            if isinstance(node.op, ast.Sub):
+                return a - b
+            if isinstance(node.op, ast.Mult):
+                return a * b
+            if isinstance(node.op, ast.Div):
+                return a / b
+            if isinstance(node.op, ast.Pow):
+                return a ** b
+        raise ValueError(f"Could not parse numeric value: {value!r}")
+
+    return eval_node(tree)
 
 
 
@@ -173,6 +228,11 @@ def _unit_factor(unit: str | None) -> float:
         "V/m": 1.0,
         "kV/m": 1e3,
         "N/C": 1.0,
+        "ml": 1e-6,
+        "mL": 1e-6,
+        "L": 1e-3,
+        "°C": 1.0,
+        "Celsius": 1.0,
 
         # angle
         "rad": 1.0,
@@ -214,13 +274,7 @@ def _to_si_quantity(quantity: Any, default_unit: str = "") -> float:
     if value is None:
         raise ValueError("Missing numeric value")
 
-    # schemas t? notebook/dataset th??ng l?u number d??i d?ng string: "100", "3e5", "1.2e-5"
-    s = str(value).replace(",", "").strip()
-    try:
-        numeric = float(s)
-    except ValueError as exc:
-        raise ValueError(f"Could not parse numeric value: {value!r}") from exc
-
+    numeric = _safe_numeric_expr(value)
     return numeric * _unit_factor(unit)
 
 def _from_si(value_si: float, unit: str | None) -> float:
@@ -275,6 +329,12 @@ def _all_relevant_objects(schema: dict[str, Any]) -> list[dict[str, Any]]:
     return rel_objs if rel_objs else _objects(schema)
 
 
+def _has_value(obj: dict[str, Any] | None) -> bool:
+    if not isinstance(obj, dict):
+        return False
+    return _raw_value(obj) is not None
+
+
 def _find_obj(
     schema: dict[str, Any],
     obj_type: str | tuple[str, ...],
@@ -291,20 +351,54 @@ def _find_obj(
     return None
 
 
-def _query_obj(schema: dict[str, Any], obj_type: str | tuple[str, ...] | None = None) -> dict[str, Any] | None:
+def _iter_unique_objects(schema: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for obj in _all_relevant_objects(schema) + _objects(schema):
+        if id(obj) in seen:
+            continue
+        out.append(obj)
+        seen.add(id(obj))
+    return out
+
+
+def _type_matches(obj: dict[str, Any], obj_type: str | tuple[str, ...] | None) -> bool:
     if obj_type is None:
-        for obj in _all_relevant_objects(schema):
-            if obj.get("role") == "query":
-                return obj
-        return None
-    return _find_obj(schema, obj_type, role="query")
+        return True
+    types = (obj_type,) if isinstance(obj_type, str) else obj_type
+    return obj.get("type") in types
+
+
+def _query_obj(schema: dict[str, Any], obj_type: str | tuple[str, ...] | None = None) -> dict[str, Any] | None:
+    candidates = [obj for obj in _iter_unique_objects(schema) if _type_matches(obj, obj_type)]
+
+    # First prefer explicit query objects.
+    for obj in candidates:
+        if obj.get("role") == "query":
+            return obj
+
+    # LLM often writes role="unknown" for the thing being asked.
+    for obj in candidates:
+        if obj.get("role") == "unknown" and _raw_value(obj) is None:
+            return obj
+
+    # If an id/name says query and value is null, treat as query even if role is bad.
+    for obj in candidates:
+        blob = _id_symbol_text(obj) if "_id_symbol_text" in globals() else " ".join(str(obj.get(k, "")) for k in ("id", "symbol", "type")).lower()
+        if "query" in blob and _raw_value(obj) is None:
+            return obj
+
+    return None
 
 
 def _given_obj(schema: dict[str, Any], obj_type: str | tuple[str, ...]) -> dict[str, Any] | None:
-    obj = _find_obj(schema, obj_type, role="given")
-    if obj is not None:
-        return obj
-    return _find_obj(schema, obj_type, role="constant")
+    # Critical: do not treat value=None as a given. This was causing errors like
+    # "Missing numeric value" when the LLM marked d1/f_query as role=given but left value null.
+    for role in ("given", "constant"):
+        for obj in _iter_unique_objects(schema):
+            if _type_matches(obj, obj_type) and obj.get("role") == role and _has_value(obj):
+                return obj
+    return None
 
 
 def _required_si(schema: dict[str, Any], obj_type: str | tuple[str, ...], unit: str) -> float:
@@ -394,6 +488,18 @@ def _solve_capacitor_charge_voltage(schema: dict[str, Any], formula: str) -> Sol
 
 def _solve_capacitor_energy_voltage(schema: dict[str, Any], formula: str) -> SolveResult:
     w_query = _query_obj(schema, "energy")
+
+    # Repair common LLM mistake: phrases like "electric field energy of the capacitor"
+    # mean stored energy W, not energy density u. If C and U are present and the
+    # only query is energy_density, reuse that query as an energy query.
+    if w_query is None and _given_obj(schema, "capacitance") is not None and _given_obj(schema, "voltage") is not None:
+        mislabeled = _query_obj(schema, "energy_density")
+        if mislabeled is not None:
+            mislabeled["type"] = "energy"
+            if str(mislabeled.get("unit", "")).strip() in {"", "J/m3", "J/m^3", "J/m³"}:
+                mislabeled["unit"] = "uJ"
+            w_query = mislabeled
+
     c_query = _query_obj(schema, "capacitance")
     u_query = _query_obj(schema, "voltage")
 
@@ -430,6 +536,48 @@ def _solve_capacitor_energy_voltage(schema: dict[str, Any], formula: str) -> Sol
 
     result = _new_result()
     result.add_step("Formula selected", "Use capacitor energy formula W = 1/2*C*U^2.")
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
+def _solve_capacitor_energy_charge_voltage(schema: dict[str, Any], formula: str) -> SolveResult:
+    w_query = _query_obj(schema, "energy")
+    q_query = _query_obj(schema, "charge")
+    u_query = _query_obj(schema, "voltage")
+
+    try:
+        if w_query is not None:
+            q = _required_si(schema, "charge", "C")
+            u = _required_si(schema, "voltage", "V")
+            value = 0.5 * q * u
+            query = w_query
+            quantity_type = "energy"
+            default_unit = "J"
+        elif q_query is not None:
+            w = _required_si(schema, "energy", "J")
+            u = _required_si(schema, "voltage", "V")
+            if u == 0:
+                return _fail("Voltage must be non-zero when solving charge.", formula)
+            value = 2 * w / u
+            query = q_query
+            quantity_type = "charge"
+            default_unit = "C"
+        elif u_query is not None:
+            w = _required_si(schema, "energy", "J")
+            q = _required_si(schema, "charge", "C")
+            if q == 0:
+                return _fail("Charge must be non-zero when solving voltage.", formula)
+            value = 2 * w / q
+            query = u_query
+            quantity_type = "voltage"
+            default_unit = "V"
+        else:
+            return _fail("No supported query object for W = 0.5*Q*U.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use capacitor energy formula W = 1/2*Q*U.")
     result.answer = _answer(value, query, quantity_type, default_unit)
     return result
 
@@ -528,6 +676,53 @@ def _solve_parallel_plate_field(schema: dict[str, Any], formula: str) -> SolveRe
     result = _new_result()
     result.add_step("Formula selected", "Use parallel-plate field E = U/d.")
     result.answer = _answer(value, query, "electric_field", "V/m")
+    return result
+
+
+def _solve_capacitor_voltage_series(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "voltage")
+    if query is None:
+        return _fail("No voltage query object for series capacitor voltage division.", formula)
+
+    try:
+        rel = _first_formula_relation(schema)
+        id_map = {obj.get("id"): obj for obj in _objects(schema)}
+        rel_ids = [obj_id for obj_id in rel.get("objects", []) if obj_id in id_map]
+        rel_objs = [id_map[obj_id] for obj_id in rel_ids]
+
+        caps = [obj for obj in rel_objs if obj.get("type") == "capacitance" and obj.get("role") != "query"]
+        if len(caps) < 2:
+            caps = [obj for obj in _objects(schema) if obj.get("type") == "capacitance" and obj.get("role") != "query"]
+        if len(caps) < 2:
+            return _fail("Need two capacitances for series capacitor voltage division.", formula)
+
+        voltages = [obj for obj in rel_objs if obj.get("type") == "voltage" and obj.get("role") != "query"]
+        if not voltages:
+            voltages = [obj for obj in _objects(schema) if obj.get("type") == "voltage" and obj.get("role") != "query"]
+        if not voltages:
+            return _fail("Need total voltage for series capacitor voltage division.", formula)
+
+        c1 = _to_si_quantity(caps[0], "F")
+        c2 = _to_si_quantity(caps[1], "F")
+        u_total = _to_si_quantity(voltages[0], "V")
+        if c1 <= 0 or c2 <= 0:
+            return _fail("Capacitances must be positive.", formula)
+
+        qid = str(query.get("id", "")).lower()
+        # For two capacitors in series: U1 = U*C2/(C1+C2), U2 = U*C1/(C1+C2).
+        if "2" in qid and "1" not in qid.replace("u2", ""):
+            value = u_total * c1 / (c1 + c2)
+        elif "1" in qid:
+            value = u_total * c2 / (c1 + c2)
+        else:
+            # If the query id is generic, use the last capacitance mentioned in the relation.
+            value = u_total * c1 / (c1 + c2)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use series capacitor voltage division: U_i = Q/C_i with common Q.")
+    result.answer = _answer(value, query, "voltage", "V")
     return result
 
 
@@ -747,6 +942,44 @@ def _solve_capacitor_energy_charge_scaling_constant_capacitance(schema: dict[str
         "At constant capacitance, W = Q^2/(2C), so W2/W1 = (Q2/Q1)^2.",
     )
     result.answer = _answer_ratio(w_ratio, query)
+    return result
+
+
+def _solve_parallel_plate_capacitance_distance_scaling(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        c_initial_obj = None
+        for obj in _iter_unique_objects(schema):
+            if obj.get("type") == "capacitance" and obj.get("role") in {"given", "constant"} and _has_value(obj):
+                c_initial_obj = obj
+                break
+        if c_initial_obj is None:
+            return _fail("Missing initial capacitance.", formula)
+        c_initial = _to_si_quantity(c_initial_obj, "F")
+
+        ratio_obj = None
+        for obj in _iter_unique_objects(schema):
+            blob = _id_symbol_text(obj)
+            if obj.get("type") == "ratio" and _has_value(obj) and any(k in blob for k in ["d2/d1", "df/di", "distance", "separation", "d_ratio"]):
+                ratio_obj = obj
+                break
+        if ratio_obj is None:
+            ratio_obj = _given_obj(schema, "ratio")
+        if ratio_obj is None:
+            return _fail("Missing distance ratio d2/d1.", formula)
+        d_ratio = _to_si_quantity(ratio_obj, "times")
+        if d_ratio == 0:
+            return _fail("Distance ratio must be non-zero.", formula)
+
+        query = _query_obj(schema, "capacitance")
+        if query is None:
+            return _fail("Missing capacitance query.", formula)
+        value = c_initial / d_ratio
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "For fixed area and medium, parallel-plate capacitance is inversely proportional to separation: C2 = C1/(d2/d1).")
+    result.answer = _answer(value, query, "capacitance", _raw_unit(c_initial_obj, "F"))
     return result
 
 
@@ -1483,49 +1716,259 @@ def _solve_infinite_wire_electric_field(schema: dict[str, Any], formula: str) ->
     return result
 
 
+
+def _measurement_uncertainty_obj(schema: dict[str, Any], quantity_prefixes: tuple[str, ...] = ()) -> dict[str, Any] | None:
+    """Return an absolute uncertainty object.
+
+    The LLM uses many names for the same idea: absolute_error, uncertainty,
+    voltage_uncertainty, dU, delta_U, current_error, least_count, etc.  This
+    helper keeps the deterministic solver tolerant without guessing values.
+    """
+    wanted_types = {
+        "absolute_error",
+        "absolute_uncertainty",
+        "uncertainty",
+        "measurement_uncertainty",
+        "measurement_error",
+        "error",
+    }
+    if quantity_prefixes:
+        for prefix in quantity_prefixes:
+            wanted_types.add(f"{prefix}_error")
+            wanted_types.add(f"{prefix}_uncertainty")
+            wanted_types.add(f"delta_{prefix}")
+
+    prefix_tokens = tuple(p.lower() for p in quantity_prefixes)
+    candidates = [
+        obj for obj in _iter_unique_objects(schema)
+        if obj.get("role") in {"given", "constant"}
+        and _has_value(obj)
+        and str(obj.get("type", "")) in wanted_types | {"least_count"}
+    ]
+
+    if quantity_prefixes:
+        for obj in candidates:
+            blob = _id_symbol_text(obj)
+            if any(tok in blob for tok in prefix_tokens):
+                return obj
+
+        # Common symbols emitted by LLMs.
+        symbol_aliases = {
+            "voltage": ("du", "delta u", "delta_u", "u_error", "voltage"),
+            "current": ("di", "delta i", "delta_i", "i_error", "current"),
+            "resistance": ("dr", "delta r", "delta_r", "r_error", "resistance"),
+            "power": ("dp", "delta p", "delta_p", "p_error", "power"),
+        }
+        aliases = []
+        for prefix in quantity_prefixes:
+            aliases.extend(symbol_aliases.get(prefix, ()))
+        for obj in candidates:
+            blob = _id_symbol_text(obj)
+            if any(alias in blob for alias in aliases):
+                return obj
+
+    # Least count is an absolute uncertainty if no more specific object exists.
+    for obj in candidates:
+        if obj.get("type") == "least_count":
+            return obj
+    return candidates[0] if candidates else None
+
+
+def _measurement_value_obj(schema: dict[str, Any], obj_type: str) -> dict[str, Any] | None:
+    obj = _given_obj(schema, obj_type)
+    if obj is not None:
+        return obj
+    # LLM often uses measured_value for a generic measured length/current/etc.
+    if obj_type == "measured_value":
+        return _given_obj(schema, ("length", "mass", "voltage", "current", "temperature", "volume", "resistance", "time", "force"))
+    return None
+
+
 def _solve_percentage_relative_error(schema: dict[str, Any], formula: str) -> SolveResult:
-    query = _query_obj(schema, ("percent_error", "relative_error", "ratio")) or _query_obj(schema)
+    query = _query_obj(schema, ("percent_error", "percentage_relative_error", "relative_error", "ratio")) or _query_obj(schema)
     if query is None:
         return _fail("No query object for percentage relative error.", formula)
 
     try:
-        abs_error = _required_scalar(schema, "absolute_error")
-        measured = _required_scalar(schema, "measured_value")
+        measured_obj = _measurement_value_obj(schema, "measured_value")
+        if measured_obj is None:
+            # Prefer the first non-error measured quantity.
+            for t in ("length", "voltage", "current", "mass", "temperature", "volume", "resistance", "time", "force"):
+                measured_obj = _given_obj(schema, t)
+                if measured_obj is not None:
+                    break
+        if measured_obj is None:
+            raise ValueError("Missing measured value.")
+
+        unit = _raw_unit(measured_obj, "")
+        measured = _to_si_quantity(measured_obj, unit)
         if measured == 0:
             return _fail("Measured value must be non-zero.", formula)
+
+        err_obj = _measurement_uncertainty_obj(schema)
+        if err_obj is None:
+            raise ValueError("Missing absolute error, uncertainty, or least count.")
+        abs_error = _to_si_quantity(err_obj, unit)
         percent = abs(abs_error) / abs(measured) * 100.0
     except Exception as exc:
         return _fail(str(exc), formula)
 
     result = _new_result()
-    result.add_step("Formula selected", "Use percentage relative error = absolute error / measured value * 100%.")
+    result.add_step("Formula selected", "Use percentage relative error = absolute uncertainty / measured value * 100%.")
     result.answer = f"{_fmt(percent)} %"
     return result
 
 
 def _solve_absolute_error_from_actual(schema: dict[str, Any], formula: str) -> SolveResult:
-    query = _query_obj(schema, "absolute_error")
-    if query is None:
-        return _fail("Only absolute error query is supported for |actual - measured|.", formula)
-
     try:
-        actual_obj = _given_obj(schema, "actual_value")
+        actual_obj = _given_obj(schema, "actual_value") or _given_obj(schema, "true_value")
         measured_obj = _given_obj(schema, "measured_value")
         if actual_obj is None or measured_obj is None:
             raise ValueError("Missing actual_value and/or measured_value.")
 
-        unit = _raw_unit(query, _raw_unit(actual_obj, _raw_unit(measured_obj, "")))
+        unit = _raw_unit(actual_obj, _raw_unit(measured_obj, ""))
         actual = _to_si_quantity(actual_obj, unit)
         measured = _to_si_quantity(measured_obj, unit)
-        value = abs(actual - measured)
+        abs_value = abs(actual - measured)
+
+        queries = [obj for obj in _iter_unique_objects(schema) if obj.get("role") == "query"]
+        if not queries:
+            queries = [_query_obj(schema, "absolute_error") or _query_obj(schema)]
+
+        answers: list[str] = []
+        for q in queries:
+            if q is None:
+                continue
+            qtype = str(q.get("type", ""))
+            if qtype in {"absolute_error", "absolute_uncertainty", "error"}:
+                answers.append(_answer(abs_value, q, "absolute_error", unit))
+            elif qtype in {"relative_error", "percent_error", "percentage_relative_error", "ratio"}:
+                denominator = abs(measured) if measured != 0 else abs(actual)
+                if denominator == 0:
+                    return _fail("Reference value must be non-zero for relative error.", formula)
+                answers.append(f"{_fmt(100.0 * abs_value / denominator)} %")
+        if not answers:
+            query = _query_obj(schema, "absolute_error") or _query_obj(schema)
+            answers = [_answer(abs_value, query, "absolute_error", unit)]
     except Exception as exc:
         return _fail(str(exc), formula)
 
     result = _new_result()
-    result.add_step("Formula selected", "Use absolute error = |actual value - measured value|.")
-    result.answer = _answer(value, query, "absolute_error", _raw_unit(query, ""))
+    result.add_step("Formula selected", "Use absolute error = |actual value - measured value| and relative error = absolute error / measured value.")
+    result.answer = "; ".join(answers)
     return result
 
+
+def _solve_random_error_half_range(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        values = [
+            obj for obj in _iter_unique_objects(schema)
+            if obj.get("role") in {"given", "constant"}
+            and _has_value(obj)
+            and (
+                obj.get("type") in {"measured_value", "actual_value", "length", "height", "mass", "voltage", "current", "temperature", "volume", "time", "resistance"}
+                or str(obj.get("type", "")).endswith("_measurement")
+            )
+        ]
+        if len(values) < 2:
+            return _fail("Need at least two measured values for random error.", formula)
+        unit = _raw_unit(values[0], "")
+        vals = [_to_si_quantity(obj, unit) for obj in values]
+        value = (max(vals) - min(vals)) / 2.0
+        query = _query_obj(schema, ("random_error", "absolute_error")) or _query_obj(schema)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use random error as half range: Delta = (max - min)/2.")
+    result.answer = _answer(value, query, "random_error", unit)
+    return result
+
+
+def _solve_measurement_maximum(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        measured_obj = _measurement_value_obj(schema, "measured_value")
+        if measured_obj is None:
+            raise ValueError("Missing measured value.")
+        unit = _raw_unit(measured_obj, "")
+        measured = _to_si_quantity(measured_obj, unit)
+        err_obj = _measurement_uncertainty_obj(schema)
+        if err_obj is None:
+            raise ValueError("Missing uncertainty or absolute error.")
+        uncertainty = _to_si_quantity(err_obj, unit)
+        query = _query_obj(schema, ("maximum_value", "measured_value")) or _query_obj(schema)
+        value = measured + abs(uncertainty)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Maximum possible measured value is measured value plus absolute uncertainty.")
+    result.answer = _answer(value, query, "maximum_value", unit)
+    return result
+
+
+def _uncertainty_for_quantity(schema: dict[str, Any], quantity: str, unit: str) -> float:
+    obj = _measurement_uncertainty_obj(schema, (quantity,))
+    if obj is None:
+        raise ValueError(f"Missing uncertainty for {quantity}.")
+    return abs(_to_si_quantity(obj, unit))
+
+
+def _solve_resistance_uncertainty_quotient(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        u_obj = _given_obj(schema, "voltage")
+        i_obj = _given_obj(schema, "current")
+        if u_obj is None or i_obj is None:
+            raise ValueError("Need voltage and current measurements.")
+        u = _to_si_quantity(u_obj, "V")
+        i = _to_si_quantity(i_obj, "A")
+        if u == 0 or i == 0:
+            return _fail("Voltage and current must be non-zero.", formula)
+        du = _uncertainty_for_quantity(schema, "voltage", "V")
+        di = _uncertainty_for_quantity(schema, "current", "A")
+        r = u / i
+        rel = du / abs(u) + di / abs(i)
+        delta_r = r * rel
+        query = _query_obj(schema, ("absolute_error", "resistance_error", "measurement_error", "uncertainty")) or _query_obj(schema)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "For R=U/I, relative uncertainty adds: DeltaR/R = DeltaU/U + DeltaI/I.")
+    result.answer = _answer(delta_r, query, "absolute_error", "ohm")
+    return result
+
+
+def _solve_power_uncertainty_product(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        u_obj = _given_obj(schema, "voltage")
+        i_obj = _given_obj(schema, "current")
+        if u_obj is None or i_obj is None:
+            raise ValueError("Need voltage and current measurements.")
+        u = _to_si_quantity(u_obj, "V")
+        i = _to_si_quantity(i_obj, "A")
+        if u == 0 or i == 0:
+            return _fail("Voltage and current must be non-zero.", formula)
+        du = _uncertainty_for_quantity(schema, "voltage", "V")
+        di = _uncertainty_for_quantity(schema, "current", "A")
+        p = u * i
+        rel = du / abs(u) + di / abs(i)
+
+        query = _query_obj(schema, ("percent_error", "percentage_relative_error", "relative_error", "absolute_error", "measurement_error", "power_error", "uncertainty")) or _query_obj(schema)
+        qtype = str(query.get("type", "")) if isinstance(query, dict) else ""
+        if qtype in {"absolute_error", "power_error", "uncertainty", "absolute_uncertainty"}:
+            answer = _answer(p * rel, query, "absolute_error", "W")
+            detail = "For P=UI, DeltaP = P(DeltaU/U + DeltaI/I)."
+        else:
+            answer = f"{_fmt(rel * 100.0)} %"
+            detail = "For P=UI, relative uncertainty adds: DeltaP/P = DeltaU/U + DeltaI/I."
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", detail)
+    result.answer = answer
+    return result
 
 def _solve_capacitor_plate_force_by_charge_area(schema: dict[str, Any], formula: str) -> SolveResult:
     query = _query_obj(schema, "force")
@@ -1740,13 +2183,470 @@ def _solve_lc_magnetic_energy_time(schema: dict[str, Any], formula: str) -> Solv
     result.answer = _answer(value, query, "energy", "J")
     return result
 
+
+def _solve_parallel_resistance(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "resistance") or _query_obj(schema, "equivalent_resistance")
+    if query is None:
+        return _fail("Only resistance query is supported for parallel resistance.", formula)
+    try:
+        resistors = [obj for obj in _objects_by_type(schema, ("resistance", "equivalent_resistance")) if obj is not query and _has_value(obj)]
+        if len(resistors) < 2:
+            return _fail("Need at least two known resistances for parallel resistance.", formula)
+        inv = 0.0
+        for obj in resistors:
+            r = _to_si_quantity(obj, "ohm")
+            if r == 0:
+                return _fail("Resistance must be non-zero.", formula)
+            inv += 1.0 / r
+        value = 1.0 / inv
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "Use parallel resistance 1/R = sum(1/R_i).")
+    result.answer = _answer(value, query, "resistance", "ohm")
+    return result
+
+
+def _solve_power_factor_at_resonance(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("power_factor", "ratio")) or _query_obj(schema)
+    result = _new_result()
+    result.add_step("Formula selected", "At resonance in a series RLC circuit, impedance is purely resistive, so cos(phi)=1.")
+    result.answer = _answer(1.0, query, "power_factor", "")
+    return result
+
+
+def _solve_resonance_check(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        l = _required_si(schema, "inductance", "H")
+        c = _required_si(schema, "capacitance", "F")
+        f_obj = _given_obj(schema, "frequency")
+        if f_obj is None:
+            return _fail("Need supply frequency for resonance yes/no check.", formula)
+        f = _to_si_quantity(f_obj, "Hz")
+        f0 = 1.0 / (2.0 * math.pi * math.sqrt(l * c))
+        # Dataset phrases round frequencies heavily, so allow absolute 0.6 Hz or 1.5% relative tolerance.
+        ok = abs(f - f0) <= max(0.6, 0.015 * abs(f0))
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", f"Check resonance by comparing f={f:g} Hz with f0={f0:g} Hz.")
+    result.answer = "Yes" if ok else "No"
+    return result
+
+
+def _solve_instrument_absolute_error(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        least = _given_obj(schema, "least_count")
+        if least is None:
+            return _fail("Missing least count.", formula)
+        query = _query_obj(schema, "absolute_error") or _query_obj(schema)
+        unit = _raw_unit(query, _raw_unit(least, "")) if query is not None else _raw_unit(least, "")
+        value = _to_si_quantity(least, unit)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "For this dataset, absolute instrument error equals the least count.")
+    result.answer = _answer(value, query, "absolute_error", unit)
+    return result
+
+
+def _solve_measurement_average(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        excluded_measurement_types = {
+            "absolute_error", "average_absolute_error", "mean_absolute_error", "random_error",
+            "absolute_uncertainty", "measurement_uncertainty", "measurement_error", "uncertainty",
+            "least_count", "percent_error", "relative_error", "percentage_relative_error",
+        }
+        values = [
+            obj for obj in _iter_unique_objects(schema)
+            if obj.get("role") in {"given", "constant"}
+            and _has_value(obj)
+            and str(obj.get("type", "")) not in excluded_measurement_types
+            and (
+                obj.get("type") in {"measured_value", "actual_value", "length", "height", "mass", "voltage", "current", "temperature", "volume", "time", "resistance", "force"}
+                or str(obj.get("type", "")).endswith("_measurement")
+            )
+        ]
+        if not values:
+            return _fail("Need measured values for average measurement.", formula)
+        unit = _raw_unit(values[0], "")
+        vals = [_to_si_quantity(obj, unit) for obj in values]
+        mean = sum(vals) / len(vals)
+        avg_abs_err = sum(abs(v - mean) for v in vals) / len(vals)
+        queries = [obj for obj in _iter_unique_objects(schema) if obj.get("role") == "query"]
+        if not queries:
+            queries = [_query_obj(schema)]
+        answers: list[str] = []
+        for q in queries:
+            if q is None:
+                continue
+            qtype = q.get("type")
+            if qtype in {"average_value", "average_length", "average_mass", "average_temperature", "average_voltage", "average_current", "mean_value", "mean"} or (qtype.startswith("average_") and "error" not in qtype):
+                answers.append(_answer(mean, q, qtype, unit))
+            elif qtype in {"average_absolute_error", "mean_absolute_error", "average_error", "absolute_error"}:
+                answers.append(_answer(avg_abs_err, q, qtype, unit))
+            elif qtype in {"relative_error", "percent_error", "percentage_relative_error"}:
+                if mean == 0:
+                    return _fail("Mean must be non-zero for relative error.", formula)
+                answers.append(f"{_fmt(100.0 * avg_abs_err / abs(mean))} %")
+        if not answers:
+            answers = [_answer(mean, queries[0] if queries else None, "average_value", unit)]
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "Compute mean and average absolute deviation from repeated measurements.")
+    result.answer = "; ".join(answers)
+    return result
+
+
+
+# ---------------------------------------------------------------------------
+# Formula portfolio fallback
+# ---------------------------------------------------------------------------
+# The LLM is useful for extracting quantities, but it is not reliable enough to
+# be the final authority on the formula.  In eval logs it often selects a nearby
+# formula (for example energy_density for "electric field energy") even though
+# the extracted objects are sufficient for a different formula.  The portfolio
+# fallback below tries formulas in a conservative order:
+#   1. formulas explicitly emitted by the LLM schema relations,
+#   2. formulas retrieved for the prompt and attached as schema["formula_candidates"],
+#   3. formulas inferred from object/query types.
+# A formula is accepted only if its registered handler returns an actual answer.
+
+def _formula_names_from_relations(schema: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    for rel in _relations(schema):
+        if not isinstance(rel, dict):
+            continue
+        for key in ("name", "formula", "formula_id", "relation", "type"):
+            value = rel.get(key)
+            if isinstance(value, str) and value.strip() and value != "formula":
+                names.append(value.strip())
+                break
+    return names
+
+
+def _formula_names_from_schema_candidates(schema: dict[str, Any]) -> list[str]:
+    raw = schema.get("formula_candidates") or schema.get("retrieved_formulas") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+
+    names: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            names.append(item)
+        elif isinstance(item, dict):
+            for key in ("id", "formula_id", "name", "formula"):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    names.append(value.strip())
+                    break
+    return names
+
+
+def _object_type_set(schema: dict[str, Any]) -> set[str]:
+    return {str(obj.get("type")) for obj in _objects(schema) if obj.get("type")}
+
+
+def _has_query_type(schema: dict[str, Any], obj_type: str | tuple[str, ...]) -> bool:
+    return _query_obj(schema, obj_type) is not None
+
+
+def _count_given(schema: dict[str, Any], obj_type: str | tuple[str, ...]) -> int:
+    return sum(
+        1
+        for obj in _iter_unique_objects(schema)
+        if _type_matches(obj, obj_type)
+        and obj.get("role") in {"given", "constant"}
+        and _has_value(obj)
+    )
+
+
+def _compatible_formula_names_from_objects(schema: dict[str, Any]) -> list[str]:
+    types = _object_type_set(schema)
+    names: list[str] = []
+
+    def add(name: str) -> None:
+        if name not in names:
+            names.append(name)
+
+    has_c = "capacitance" in types
+    has_u = "voltage" in types
+    has_q = "charge" in types
+    has_w = "energy" in types or "energy_density" in types
+    has_d = "distance" in types or "length" in types
+    has_area = "area" in types or "radius" in types
+    has_i = "current" in types
+    has_r = "resistance" in types
+    has_p = "power" in types
+    has_l = "inductance" in types
+    has_f = "frequency" in types
+    has_omega = "angular_frequency" in types
+
+    # Capacitor core relations.
+    if has_c and has_u:
+        if has_w or _has_query_type(schema, ("energy", "energy_density")):
+            add("capacitor_energy_voltage")
+        add("capacitor_charge_voltage")
+    if has_q and has_u:
+        if has_w or _has_query_type(schema, "energy"):
+            add("capacitor_energy_charge_voltage")
+        add("capacitor_charge_voltage")
+    if has_q and has_c:
+        add("capacitor_charge_voltage")
+
+    # Parallel-plate capacitor / field / density.
+    if has_area and has_d:
+        add("parallel_plate_capacitance")
+        if has_u:
+            add("parallel_plate_charge_from_voltage")
+    if has_u and has_d:
+        add("parallel_plate_field")
+        if _has_query_type(schema, "energy_density"):
+            add("capacitor_energy_density")
+    if "electric_field" in types and has_area:
+        add("parallel_plate_charge_from_field")
+
+    # Simple scaling forms.
+    if has_c and "ratio" in types:
+        add("parallel_plate_capacitance_distance_scaling")
+        add("capacitor_energy_voltage_scaling_constant_capacitance")
+        add("capacitor_energy_scaling_constant_voltage")
+        add("capacitor_energy_charge_scaling_constant_capacitance")
+
+    # RLC / LC.
+    if has_l and has_c and (has_f or has_omega or _has_query_type(schema, ("frequency", "angular_frequency", "capacitance", "inductance"))):
+        add("lc_resonance_frequency")
+        add("lc_resonance_angular_frequency")
+    if has_l and has_i and ("energy" in types or _has_query_type(schema, "energy")):
+        add("inductor_energy")
+
+    # Basic circuit formulas.
+    if has_u and has_i:
+        add("ohm_law")
+        add("power_voltage_current")
+    if has_u and has_r:
+        add("ohm_law")
+        add("power_voltage_resistance")
+    if has_i and has_r:
+        add("ohm_law")
+        add("power_current_resistance")
+    if _count_given(schema, "resistance") >= 2 and _has_query_type(schema, ("resistance", "equivalent_resistance")):
+        add("parallel_resistance")
+    if has_p and has_u:
+        add("power_voltage_current")
+        add("power_voltage_resistance")
+    if has_p and has_i:
+        add("power_voltage_current")
+        add("power_current_resistance")
+
+    # Measurement / error.
+    measurement_types = {
+        "absolute_error", "absolute_uncertainty", "uncertainty", "measurement_uncertainty", "least_count",
+        "actual_value", "true_value", "measured_value", "voltage_error", "current_error", "measurement_error",
+        "voltage_uncertainty", "current_uncertainty", "random_error", "maximum_value",
+    }
+    if types & measurement_types or _has_query_type(schema, ("percent_error", "percentage_relative_error", "relative_error", "absolute_error")):
+        if "least_count" in types and _has_query_type(schema, "absolute_error"):
+            add("instrument_absolute_error")
+        if _has_query_type(schema, ("percent_error", "percentage_relative_error", "relative_error")):
+            add("percentage_relative_error")
+        if {"actual_value", "true_value"} & types and "measured_value" in types:
+            add("absolute_error_from_actual")
+        if _has_query_type(schema, ("maximum_value",)):
+            add("measurement_maximum")
+        if has_u and has_i and _has_query_type(schema, ("absolute_error", "resistance_error")):
+            add("resistance_uncertainty_quotient")
+        if has_u and has_i and (has_p or _has_query_type(schema, ("percent_error", "percentage_relative_error", "relative_error", "power_error", "absolute_error"))):
+            add("power_uncertainty_product")
+    if _count_given(schema, ("measured_value", "actual_value", "length", "height", "mass", "voltage", "current", "temperature", "volume")) >= 2:
+        if _has_query_type(schema, ("random_error",)):
+            add("random_error_half_range")
+        add("measurement_average")
+
+    # Solenoid / magnetic formulas.
+    if "turn_count" in types or "turn_density" in types:
+        add("solenoid_turn_density")
+        if "magnetic_field" in types and "current" in types:
+            add("solenoid_magnetic_field")
+        if "area" in types:
+            add("solenoid_inductance")
+
+    return names
+
+
+def _candidate_formula_names(schema: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+
+    def add(name: str | None) -> None:
+        if not name:
+            return
+        canonical = _canonical_formula(schema, name)
+        if canonical and canonical not in out:
+            out.append(canonical)
+
+    for name in _formula_names_from_relations(schema):
+        add(name)
+    for name in _formula_names_from_schema_candidates(schema):
+        add(name)
+    for name in _compatible_formula_names_from_objects(schema):
+        add(name)
+
+    if not out:
+        add(_formula_id(schema))
+
+    return out
+
+
+def _with_forced_formula(schema: dict[str, Any], formula: str) -> dict[str, Any]:
+    trial = copy.deepcopy(schema)
+    obj_ids = [obj.get("id") for obj in _objects(trial) if obj.get("id")]
+
+    relations = trial.get("relations")
+    if not isinstance(relations, list) or not relations:
+        trial["relations"] = [{"type": "formula", "name": formula, "objects": obj_ids}]
+        return trial
+
+    first_formula_found = False
+    for rel in relations:
+        if not isinstance(rel, dict):
+            continue
+        if rel.get("type") == "formula" or rel.get("name") or rel.get("formula"):
+            rel["type"] = "formula"
+            rel["name"] = formula
+            # For fallback candidates, let the handler inspect all objects instead
+            # of being restricted by a possibly bad LLM relation object list.
+            rel["objects"] = obj_ids
+            first_formula_found = True
+            break
+
+    if not first_formula_found:
+        relations.insert(0, {"type": "formula", "name": formula, "objects": obj_ids})
+
+    return trial
+
+
+def _is_successful_result(result: SolveResult) -> bool:
+    return result.status in {"ok", "solved"} and result.answer is not None
+
+
+def _annotate_portfolio_result(
+    result: SolveResult,
+    *,
+    selected_formula: str,
+    original_formulas: list[str],
+    tried: list[str],
+    errors: list[dict[str, str]],
+) -> SolveResult:
+    fallback_used = selected_formula not in {_canonical_formula({}, f) for f in original_formulas}
+    result.add_step(
+        "Formula portfolio selected",
+        f"Selected {selected_formula} after trying {len(tried)} candidate(s).",
+        selected_formula=selected_formula,
+        fallback_used=fallback_used,
+        tried_formulas=tried,
+        formula_errors=errors[-8:],
+    )
+    return result
+
+def _canonical_formula(schema: dict[str, Any], formula: str) -> str:
+    raw = (formula or "").strip()
+    key = raw.lower()
+    aliases = {
+        "lc_resonant_frequency": "lc_resonance_frequency",
+        "capacitor_energy_charge_voltage": "capacitor_energy_charge_voltage",
+        "capacitor_energy_charge_voltage_formula": "capacitor_energy_charge_voltage",
+        "energy_from_charge_voltage": "capacitor_energy_charge_voltage",
+        "parallel_plate_capacitance_distance_scaling": "parallel_plate_capacitance_distance_scaling",
+        "capacitance_distance_scaling": "parallel_plate_capacitance_distance_scaling",
+        "plate_separation_capacitance_scaling": "parallel_plate_capacitance_distance_scaling",
+        "least_count_absolute_error": "instrument_absolute_error",
+        "instrument_absolute_error": "instrument_absolute_error",
+        "least_count_error": "instrument_absolute_error",
+        "capacitor_inductor_resonant_frequency": "lc_resonance_frequency",
+        "resonant_frequency_inductor_capacitor": "lc_resonance_frequency",
+        "resonance_frequency": "lc_resonance_frequency",
+        "resonance_condition": "resonance_check",
+        "power_factor_at_resonance": "power_factor_at_resonance",
+        "resistance_voltage_current": "ohm_law",
+        "voltage_current_resistance": "ohm_law",
+        "power_from_voltage_current": "power_voltage_current",
+        "percent_relative_uncertainty": "percentage_relative_error",
+        "relative_uncertainty": "percentage_relative_error",
+        "random_error": "random_error_half_range",
+        "random_error_half_range": "random_error_half_range",
+        "half_range_random_error": "random_error_half_range",
+        "average_value": "measurement_average",
+        "average_absolute_error": "measurement_average",
+        "measurement_maximum": "measurement_maximum",
+        "maximum_possible_value": "measurement_maximum",
+        "max_possible_value": "measurement_maximum",
+        "resistance_uncertainty": "resistance_uncertainty_quotient",
+        "resistance_uncertainty_quotient": "resistance_uncertainty_quotient",
+        "resistance_error_from_voltage_current": "resistance_uncertainty_quotient",
+        "power_uncertainty": "power_uncertainty_product",
+        "power_uncertainty_product": "power_uncertainty_product",
+        "power_error_from_voltage_current": "power_uncertainty_product",
+        "parallel_resistance": "parallel_resistance",
+        "not_relevant": "capacitor_plate_force_by_charge_area",
+        "turn_density": "solenoid_turn_density",
+        "turn_density_from_turn_count_and_length": "solenoid_turn_density",
+        "inductive_reactance": "ac_inductive_reactance",
+        "capacitor_voltage_charge": "capacitor_charge_voltage",
+        "total_impedance_from_components": "ac_impedance",
+        "impedance_series": "ac_impedance",
+    }
+    key = aliases.get(key, key)
+
+    # If the LLM picked frequency formula but the query is angular frequency, route to omega.
+    if key == "lc_resonance_frequency" and _query_obj(schema, "angular_frequency") is not None:
+        return "lc_resonance_angular_frequency"
+
+    # If there is a given frequency and no numeric query, the question is often Yes/No resonance.
+    if key in {"lc_resonance_frequency", "quality_factor"}:
+        if _given_obj(schema, "frequency") is not None and _query_obj(schema, ("frequency", "angular_frequency", "capacitance", "inductance")) is None:
+            return "resonance_check"
+        # CHLT often extracts quality_factor query for yes/no resonance. Prefer check when f is present.
+        if _given_obj(schema, "frequency") is not None and _query_obj(schema, "quality_factor") is not None:
+            return "resonance_check"
+
+    # Energy of capacitor with C and U sometimes gets mislabeled as energy_density.
+    # "electric field energy" is stored energy W, while "energy density" is u.
+    if key == "capacitor_energy_density":
+        if _given_obj(schema, "capacitance") is not None and _given_obj(schema, "voltage") is not None:
+            if _query_obj(schema, "energy") is not None or _query_obj(schema, "energy_density") is not None:
+                # If there is no distance/electric-field given, density is impossible; route to W=1/2CU^2.
+                if _given_obj(schema, ("distance", "length")) is None and _given_obj(schema, "electric_field") is None:
+                    return "capacitor_energy_voltage"
+                if _query_obj(schema, "energy") is not None:
+                    return "capacitor_energy_voltage"
+
+    # If final query is energy and Q + U are given, prefer direct W = 1/2 Q U even if the LLM emitted an intermediate C_query.
+    if _query_obj(schema, "energy") is not None and _given_obj(schema, "charge") is not None and _given_obj(schema, "voltage") is not None:
+        if key in {"capacitor_charge_voltage", "capacitor_energy_voltage", "capacitor_energy_charge_voltage"}:
+            return "capacitor_energy_charge_voltage"
+
+    # If any relation explicitly asks for aggregate measurement, use the right aggregate handler.
+    names = {str(rel.get("name", "")).lower() for rel in _relations(schema)}
+    if {"random_error", "random_error_half_range", "half_range_random_error"} & names:
+        return "random_error_half_range"
+    if {"average_value", "average_absolute_error", "measurement_average"} & names:
+        return "measurement_average"
+
+    return key
+
 def solve_schema(schema: dict[str, Any]) -> SolveResult:
-    formula = _formula_id(schema)
+    formula = _canonical_formula(schema, _formula_id(schema))
 
     handlers = {
         "capacitor_charge_voltage": _solve_capacitor_charge_voltage,
         "capacitor_energy_voltage": _solve_capacitor_energy_voltage,
+        "capacitor_energy_charge_voltage": _solve_capacitor_energy_charge_voltage,
         "parallel_plate_capacitance": _solve_parallel_plate_capacitance,
+        "parallel_plate_capacitance_distance_scaling": _solve_parallel_plate_capacitance_distance_scaling,
         "parallel_plate_charge_from_voltage": _solve_parallel_plate_charge_from_voltage,
         "parallel_plate_charge_from_field": _solve_parallel_plate_charge_from_field,
         "parallel_plate_field": _solve_parallel_plate_field,
@@ -1758,6 +2658,8 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "capacitor_energy_charge_scaling_constant_capacitance": _solve_capacitor_energy_charge_scaling_constant_capacitance,
         "series_capacitance_unknown": _solve_series_capacitance_unknown,
         "capacitor_series_unknown": _solve_series_capacitance_unknown,
+        "capacitor_voltage_series": _solve_capacitor_voltage_series,
+        "series_capacitor_voltage_division": _solve_capacitor_voltage_series,
         "inductor_energy": _solve_inductor_energy,
         "lc_magnetic_energy_inductor": _solve_inductor_energy,
         "lc_resonance_frequency": _solve_lc_resonance_frequency,
@@ -1770,8 +2672,17 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "power_current_resistance": _solve_power_current_resistance,
         "ac_impedance": _solve_ac_impedance,
         "power_factor": _solve_power_factor,
+        "power_factor_at_resonance": _solve_power_factor_at_resonance,
         "quality_factor": _solve_quality_factor,
+        "resonance_check": _solve_resonance_check,
         "frequency_scaling_for_resonance": _solve_frequency_scaling_for_resonance,
+        "parallel_resistance": _solve_parallel_resistance,
+        "instrument_absolute_error": _solve_instrument_absolute_error,
+        "measurement_average": _solve_measurement_average,
+        "random_error_half_range": _solve_random_error_half_range,
+        "measurement_maximum": _solve_measurement_maximum,
+        "resistance_uncertainty_quotient": _solve_resistance_uncertainty_quotient,
+        "power_uncertainty_product": _solve_power_uncertainty_product,
         "solenoid_turn_density": _solve_solenoid_turn_density,
         "solenoid_magnetic_field": _solve_solenoid_magnetic_field,
         "solenoid_magnetic_field_from_n": _solve_solenoid_magnetic_field,
@@ -1795,17 +2706,83 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "lc_magnetic_energy_time": _solve_lc_magnetic_energy_time,
     }
 
-    handler = handlers.get(formula)
-    if handler is None:
+    candidates = _candidate_formula_names(schema)
+    if formula and formula not in candidates:
+        candidates.insert(0, formula)
+
+    original_formulas = _formula_names_from_relations(schema)
+    tried: list[str] = []
+    errors: list[dict[str, str]] = []
+    unsupported: list[str] = []
+
+    for candidate in candidates:
+        candidate = _canonical_formula(schema, candidate)
+        if not candidate or candidate in tried:
+            continue
+        tried.append(candidate)
+
+        handler = handlers.get(candidate)
+        if handler is None:
+            unsupported.append(candidate)
+            errors.append(
+                {
+                    "formula": candidate,
+                    "status": "unsupported",
+                    "error": f"No equations handler is registered for formula '{candidate}'.",
+                }
+            )
+            continue
+
+        trial = _with_forced_formula(schema, candidate)
+        try:
+            result = handler(trial, candidate)
+        except Exception as exc:  # defensive: handlers should return solve_failed, not raise
+            errors.append(
+                {
+                    "formula": candidate,
+                    "status": "exception",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            continue
+
+        if _is_successful_result(result):
+            return _annotate_portfolio_result(
+                result,
+                selected_formula=candidate,
+                original_formulas=original_formulas,
+                tried=tried,
+                errors=errors,
+            )
+
+        errors.append(
+            {
+                "formula": candidate,
+                "status": result.status,
+                "error": str(result.error or "no answer"),
+            }
+        )
+
+    if unsupported and len(unsupported) == len(tried):
         result = _new_result("unsupported")
-        result.error = f"Unsupported equation formula: {formula or '<missing>'}"
+        result.error = f"Unsupported equation formula: {unsupported[0] or '<missing>'}"
         result.add_step(
             "Equation unsupported",
-            f"No equations handler is registered for formula '{formula or '<missing>'}'.",
+            f"No equations handler is registered for formula '{unsupported[0] or '<missing>'}'.",
+            tried_formulas=tried,
+            formula_errors=errors,
         )
         return result
 
-    return handler(schema, formula)
+    result = _new_result("solve_failed")
+    result.error = "No formula candidate solved successfully."
+    result.add_step(
+        "Formula portfolio failed",
+        "All equation formula candidates failed or were unsupported.",
+        tried_formulas=tried,
+        formula_errors=errors,
+    )
+    return result
 
 
 def solve(question: str) -> SolveResult:

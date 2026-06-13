@@ -36,7 +36,15 @@ CAPACITOR_STATE_KEYWORDS = {
     "battery is removed": "disconnect",
     "isolated": "disconnect",
     "connected to source": "source",
+    "connected to the source": "source",
     "connected to battery": "source",
+    "connected to the battery": "source",
+    "connected to a power source": "source",
+    "connected to the voltage source": "source",
+    "connected to a voltage source": "source",
+    "while still connected": "source",
+    "remains connected": "source",
+    "still connected": "source",
     "insert dielectric": "dielectric_event",
     "dielectric is inserted": "dielectric_event",
     "inserted between": "dielectric_event",
@@ -44,10 +52,19 @@ CAPACITOR_STATE_KEYWORDS = {
     "replace dielectric": "replace_dielectric",
     "replaced by dielectric": "replace_dielectric",
     "replaced by another dielectric": "replace_dielectric",
-    "replaced": "replace_dielectric",
+    "replaced by another capacitor": "replace_capacitor",
+    "replaced with another capacitor": "replace_capacitor",
+    "replaced by another capacitor with": "replace_capacitor",
+    "replaced": "state_transition",
     "plate separation is doubled": "distance_scale",
     "distance is doubled": "distance_scale",
+    "distance between them is doubled": "distance_scale",
+    "distance between its plates is doubled": "distance_scale",
     "separation is doubled": "distance_scale",
+    "plates are moved further apart": "distance_scale",
+    "plates are moved apart": "distance_scale",
+    "distance between them doubles": "distance_scale",
+    "distance between its plates doubles": "distance_scale",
     "area is doubled": "area_scale",
     "short-circuited": "short_circuit",
     "short circuit": "short_circuit",
@@ -61,6 +78,8 @@ CAPACITOR_STATE_KEYWORDS = {
 ELECTROSTATICS_KEYWORDS = {
     "electrostatic force": "force",
     "electric force": "force",
+    "electric forces": "resultant_vector",
+    "resultant force": "resultant_vector",
     "coulomb": "coulomb",
     "net force": "net_force",
     "force acting": "net_force",
@@ -137,20 +156,51 @@ def classify_domain(problem: str) -> DomainDecision:
         and ("replace" in text or "replaced" in text)
     )
 
+    has_capacitor_replace = (
+        has_capacitor
+        and ("replace" in text or "replaced" in text)
+        and "another capacitor" in text
+        and "dielectric" not in text
+        and "permittivity" not in text
+    )
+
+    has_connected_source_event = has_capacitor and any(k in text for k in [
+        "while still connected",
+        "remains connected",
+        "still connected",
+        "connected to a power source",
+        "connected to the voltage source",
+        "connected to a voltage source",
+    ]) and any(k in text for k in [
+        "dielectric",
+        "distance",
+        "plates are moved",
+        "separation",
+        "doubled",
+    ])
+
     if has_capacitor:
         _add_unique(state_tags, "capacitor")
 
-    # Strong electrostatics boost only when charges have spatial arrangement.
-    if any(k in text for k in ["placed", "vertices", "triangle", "collinear", "at point", "coordinates"]):
-        if any(k in text for k in ["charge", "charges", "electric force", "electrostatic force", "net force"]):
+    # Strong electrostatics boost only when charges/fields have spatial arrangement.
+    if any(k in text for k in ["placed", "vertices", "triangle", "collinear", "at point", "coordinates", "midpoint", "perpendicular bisector"]):
+        if any(k in text for k in ["charge", "charges", "electric force", "electrostatic force", "net force", "electric field", "field strength"]):
             elec_score += 3
+
+    # Direct vector-resultant exercises are electrostatics vector problems, not scalar equations.
+    if "electric forces" in text and any(k in text for k in ["magnitude", "magnitudes", "same direction", "opposite", "angle"]):
+        elec_score += 3
 
     # Capacitor state requires a real event/state transition.
     # Plain capacitor formulas stay equations.
-    if has_capacitor and (state_score > 0 or has_dielectric_replace):
+    if has_capacitor and (state_score > 0 or has_dielectric_replace or has_capacitor_replace or has_connected_source_event):
         state_score += 3 + cap_base_score
         if has_dielectric_replace:
             _add_unique(state_tags, "replace_dielectric")
+        if has_capacitor_replace:
+            _add_unique(state_tags, "replace_capacitor")
+        if has_connected_source_event:
+            _add_unique(state_tags, "source")
         return DomainDecision(
             domain="capacitor_state",
             confidence=state_score / max(state_score + elec_score + eq_score, 1),

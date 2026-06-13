@@ -1,0 +1,4073 @@
+diff --git a/src/xai_physics/core/units.py b/src/xai_physics/core/units.py
+index 5ac8c64..6901f14 100644
+--- a/src/xai_physics/core/units.py
++++ b/src/xai_physics/core/units.py
+@@ -1,143 +1,153 @@
+-from __future__ import annotations
+-
+-
+-UNIT_TO_SI = {
+-    # charge
+-    "C": 1.0,
+-    "mC": 1e-3,
+-    "uC": 1e-6,
+-    "μC": 1e-6,
+-    "nC": 1e-9,
+-    "pC": 1e-12,
+-
+-    # voltage
+-    "V": 1.0,
+-    "mV": 1e-3,
+-    "kV": 1e3,
+-
+-    # capacitance
+-    "F": 1.0,
+-    "mF": 1e-3,
+-    "uF": 1e-6,
+-    "μF": 1e-6,
+-    "nF": 1e-9,
+-    "pF": 1e-12,
+-
+-    # resistance
+-    "ohm": 1.0,
+-    "Ω": 1.0,
+-    "kohm": 1e3,
+-    "kΩ": 1e3,
+-    "Mohm": 1e6,
+-    "MΩ": 1e6,
+-
+-    # length
+-    "m": 1.0,
+-    "cm": 1e-2,
+-    "mm": 1e-3,
+-    "um": 1e-6,
+-    "μm": 1e-6,
+-    "nm": 1e-9,
+-
+-    # area
+-    "m^2": 1.0,
+-    "m²": 1.0,
+-    "cm^2": 1e-4,
+-    "cm²": 1e-4,
+-    "mm^2": 1e-6,
+-    "mm²": 1e-6,
+-
+-    # energy
+-    "J": 1.0,
+-    "mJ": 1e-3,
+-    "uJ": 1e-6,
+-    "μJ": 1e-6,
+-    "nJ": 1e-9,
+-    "pJ": 1e-12,
+-
+-    # force
+-    "N": 1.0,
+-    "mN": 1e-3,
+-    "uN": 1e-6,
+-    "μN": 1e-6,
+-    "?F": 1e-6,
+-    "?C": 1e-6,
+-    "?J": 1e-6,
+-    "?N": 1e-6,
+-    "?m": 1e-6,
+-    "times": 1.0,
+-    "x": 1.0,
+-    "%": 1.0,
+-}
+-
+-
+-def normalize_unit(unit: str) -> str:
+-    # AUTO_MICRO_UNIT_NORMALIZATION
+-    unit = str(unit).strip()
+-
+-    # Normalize common micro symbols and corrupted Windows/terminal variants.
+-    unit = unit.replace("?", "?")
+-    unit = unit.replace("?F", "uF")
+-    unit = unit.replace("?C", "uC")
+-    unit = unit.replace("?J", "uJ")
+-    unit = unit.replace("?N", "uN")
+-    unit = unit.replace("?m", "um")
+-
+-    if unit in {"?F", "?F"}:
+-        return "uF"
+-    if unit in {"?C", "?C"}:
+-        return "uC"
+-    if unit in {"?J", "?J"}:
+-        return "uJ"
+-    if unit in {"?N", "?N"}:
+-        return "uN"
+-    if unit in {"?m", "?m"}:
+-        return "um"
+-
+-    unit = str(unit).strip()
+-
+-    # Normalize common micro symbols / mojibake.
+-    unit = unit.replace("µ", "μ")
+-
+-    # Windows / terminal encoding may corrupt μ into ?.
+-    # Treat exact ?F, ?C, ?J, ?N, ?m as micro-units.
+-    if unit in {"?F", "？F"}:
+-        return "uF"
+-    if unit in {"?C", "？C"}:
+-        return "uC"
+-    if unit in {"?J", "？J"}:
+-        return "uJ"
+-    if unit in {"?N", "？N"}:
+-        return "uN"
+-    if unit in {"?m", "？m"}:
+-        return "um"
+-
+-    # Normalize micro symbol to ASCII aliases already supported by UNIT_TO_SI.
+-    unit = unit.replace("μF", "uF")
+-    unit = unit.replace("μC", "uC")
+-    unit = unit.replace("μJ", "uJ")
+-    unit = unit.replace("μN", "uN")
+-    unit = unit.replace("μm", "um")
+-
+-    unit = unit.replace("Ohm", "ohm")
+-
+-    return unit
+-
+-
+-def to_si(value: float, unit: str) -> float:
+-    unit = normalize_unit(unit)
+-    if unit not in UNIT_TO_SI:
+-        raise ValueError(f"Unsupported unit: {unit}")
+-    return value * UNIT_TO_SI[unit]
+-
+-
+-def convert(value: float, from_unit: str, to_unit: str) -> float:
+-    from_unit = normalize_unit(from_unit)
+-    to_unit = normalize_unit(to_unit)
+-
+-    value_si = to_si(value, from_unit)
+-
+-    if to_unit not in UNIT_TO_SI:
+-        raise ValueError(f"Unsupported unit: {to_unit}")
+-
+-    return value_si / UNIT_TO_SI[to_unit]
++from __future__ import annotations
++
++
++UNIT_TO_SI = {
++    # charge
++    "C": 1.0,
++    "mC": 1e-3,
++    "uC": 1e-6,
++    "μC": 1e-6,
++    "nC": 1e-9,
++    "pC": 1e-12,
++
++    # voltage
++    "V": 1.0,
++    "mV": 1e-3,
++    "kV": 1e3,
++
++    # capacitance
++    "F": 1.0,
++    "mF": 1e-3,
++    "uF": 1e-6,
++    "μF": 1e-6,
++    "nF": 1e-9,
++    "pF": 1e-12,
++
++    # resistance
++    "ohm": 1.0,
++    "Ω": 1.0,
++    "kohm": 1e3,
++    "kΩ": 1e3,
++    "Mohm": 1e6,
++    "MΩ": 1e6,
++
++    # length
++    "m": 1.0,
++    "cm": 1e-2,
++    "mm": 1e-3,
++    "um": 1e-6,
++    "μm": 1e-6,
++    "nm": 1e-9,
++
++    # area
++    "m^2": 1.0,
++    "m²": 1.0,
++    "cm^2": 1e-4,
++    "cm²": 1e-4,
++    "mm^2": 1e-6,
++    "mm²": 1e-6,
++
++    # energy
++    "J": 1.0,
++    "mJ": 1e-3,
++    "uJ": 1e-6,
++    "μJ": 1e-6,
++    "nJ": 1e-9,
++    "pJ": 1e-12,
++
++    # force
++    "N": 1.0,
++    "mN": 1e-3,
++    "uN": 1e-6,
++    "μN": 1e-6,
++
++    # electric field
++    "V/m": 1.0,
++    "N/C": 1.0,
++    "kV/m": 1e3,
++
++    # angle / dimensionless helpers
++    "degree": 1.0,
++    "degrees": 1.0,
++    "deg": 1.0,
++    "?F": 1e-6,
++    "?C": 1e-6,
++    "?J": 1e-6,
++    "?N": 1e-6,
++    "?m": 1e-6,
++    "times": 1.0,
++    "x": 1.0,
++    "%": 1.0,
++}
++
++
++def normalize_unit(unit: str) -> str:
++    # AUTO_MICRO_UNIT_NORMALIZATION
++    unit = str(unit).strip()
++
++    # Normalize common micro symbols and corrupted Windows/terminal variants.
++    unit = unit.replace("?", "?")
++    unit = unit.replace("?F", "uF")
++    unit = unit.replace("?C", "uC")
++    unit = unit.replace("?J", "uJ")
++    unit = unit.replace("?N", "uN")
++    unit = unit.replace("?m", "um")
++
++    if unit in {"?F", "?F"}:
++        return "uF"
++    if unit in {"?C", "?C"}:
++        return "uC"
++    if unit in {"?J", "?J"}:
++        return "uJ"
++    if unit in {"?N", "?N"}:
++        return "uN"
++    if unit in {"?m", "?m"}:
++        return "um"
++
++    unit = str(unit).strip()
++
++    # Normalize common micro symbols / mojibake.
++    unit = unit.replace("µ", "μ")
++
++    # Windows / terminal encoding may corrupt μ into ?.
++    # Treat exact ?F, ?C, ?J, ?N, ?m as micro-units.
++    if unit in {"?F", "？F"}:
++        return "uF"
++    if unit in {"?C", "？C"}:
++        return "uC"
++    if unit in {"?J", "？J"}:
++        return "uJ"
++    if unit in {"?N", "？N"}:
++        return "uN"
++    if unit in {"?m", "？m"}:
++        return "um"
++
++    # Normalize micro symbol to ASCII aliases already supported by UNIT_TO_SI.
++    unit = unit.replace("μF", "uF")
++    unit = unit.replace("μC", "uC")
++    unit = unit.replace("μJ", "uJ")
++    unit = unit.replace("μN", "uN")
++    unit = unit.replace("μm", "um")
++
++    unit = unit.replace("Ohm", "ohm")
++
++    return unit
++
++
++def to_si(value: float, unit: str) -> float:
++    unit = normalize_unit(unit)
++    if unit not in UNIT_TO_SI:
++        raise ValueError(f"Unsupported unit: {unit}")
++    return value * UNIT_TO_SI[unit]
++
++
++def convert(value: float, from_unit: str, to_unit: str) -> float:
++    from_unit = normalize_unit(from_unit)
++    to_unit = normalize_unit(to_unit)
++
++    value_si = to_si(value, from_unit)
++
++    if to_unit not in UNIT_TO_SI:
++        raise ValueError(f"Unsupported unit: {to_unit}")
++
++    return value_si / UNIT_TO_SI[to_unit]
+diff --git a/src/xai_physics/domains/electrostatics/contract.py b/src/xai_physics/domains/electrostatics/contract.py
+index e2d7f26..af3fc55 100644
+--- a/src/xai_physics/domains/electrostatics/contract.py
++++ b/src/xai_physics/domains/electrostatics/contract.py
+@@ -1,4 +1,4 @@
+-﻿from __future__ import annotations
++from __future__ import annotations
+ 
+ from typing import Any
+ 
+@@ -11,6 +11,8 @@ class ElectrostaticsSchemaValidationError(ValueError):
+ 
+ SUPPORTED_QUERIES = {
+     "net_force",
++    "electric_field",
++    "resultant_vector",
+ }
+ 
+ SUPPORTED_OUTPUTS = {
+@@ -22,7 +24,15 @@ SUPPORTED_OUTPUTS = {
+ 
+ SUPPORTED_GEOMETRY = {
+     "EquilateralTriangle",
++    "IsoscelesRightTriangle",
++    "PairwiseDistances",
+     "Collinear",
++    "Midpoint",
++    "PointOnLine",
++    "PerpendicularBisectorPoint",
++    "Centroid",
++    "FootOfPerpendicular",
++    "PerpendicularRaysFromPoint",
+ }
+ 
+ 
+@@ -49,10 +59,30 @@ def _validate_quantity(data: Any, path: str) -> None:
+         _err(f"{path}.unit is unsupported: {data['unit']}")
+ 
+ 
+-def _validate_points(schema: dict[str, Any]) -> set[str]:
+-    points = schema.get("points")
+-    if not isinstance(points, list) or not points:
+-        _err("schema.points must be a non-empty list.")
++def _query_types(schema: dict[str, Any]) -> list[str]:
++    queries = schema.get("queries")
++    if not isinstance(queries, list) or not queries:
++        _err("schema.queries must be a non-empty list.")
++    out: list[str] = []
++    for i, query in enumerate(queries):
++        if not isinstance(query, dict):
++            _err(f"queries[{i}] must be an object.")
++        qtype = query.get("type")
++        if qtype not in SUPPORTED_QUERIES:
++            _err(f"queries[{i}].type is unsupported: {qtype}")
++        out.append(qtype)
++    return out
++
++
++def _validate_points(schema: dict[str, Any], required: bool = True) -> set[str]:
++    points = schema.get("points", [])
++    if not points:
++        if required:
++            _err("schema.points must be a non-empty list.")
++        return set()
++
++    if not isinstance(points, list):
++        _err("schema.points must be a list.")
+ 
+     has_geometry = bool(schema.get("geometry"))
+     ids: set[str] = set()
+@@ -81,12 +111,28 @@ def _validate_points(schema: dict[str, Any]) -> set[str]:
+         if has_x and has_y:
+             _validate_quantity(point.get("x"), f"{path}.x")
+             _validate_quantity(point.get("y"), f"{path}.y")
+-        elif not has_geometry:
++        elif required and not has_geometry:
+             _err(f"{path} has no coordinates and schema.geometry is missing.")
+ 
+     return ids
+ 
+ 
++def _validate_distance_item(item: Any, path: str, point_ids: set[str]) -> None:
++    if not isinstance(item, dict):
++        _err(f"{path} must be an object.")
++
++    pair = item.get("between")
++    if not isinstance(pair, list) or len(pair) != 2:
++        _err(f"{path}.between must contain exactly two points.")
++
++    for p in pair:
++        if p not in point_ids:
++            _err(f"{path}.between references unknown point: {p}")
++
++    pseudo_q = {"value": item.get("value"), "unit": item.get("unit")}
++    _validate_quantity(pseudo_q, path)
++
++
+ def _validate_geometry(schema: dict[str, Any], point_ids: set[str]) -> None:
+     geometry = schema.get("geometry", [])
+     if geometry is None:
+@@ -105,8 +151,8 @@ def _validate_geometry(schema: dict[str, Any], point_ids: set[str]) -> None:
+         if gtype not in SUPPORTED_GEOMETRY:
+             _err(f"{path}.type is unsupported: {gtype}")
+ 
+-        points = geom.get("points")
+-        if not isinstance(points, list) or not all(isinstance(p, str) for p in points):
++        points = geom.get("points", [])
++        if points and (not isinstance(points, list) or not all(isinstance(p, str) for p in points)):
+             _err(f"{path}.points must be a list of point ids.")
+ 
+         for p in points:
+@@ -117,43 +163,135 @@ def _validate_geometry(schema: dict[str, Any], point_ids: set[str]) -> None:
+             if len(points) != 3:
+                 _err(f"{path}.points must contain exactly 3 points.")
+             _validate_quantity(geom.get("side"), f"{path}.side")
++            orientation = geom.get("orientation", "above")
++            if orientation not in {"above", "below"}:
++                _err(f"{path}.orientation must be 'above' or 'below'.")
+ 
++        elif gtype == "IsoscelesRightTriangle":
++            if len(points) != 3:
++                _err(f"{path}.points must contain exactly 3 points.")
++            if geom.get("right_angle_at") not in point_ids:
++                _err(f"{path}.right_angle_at references unknown point.")
++            _validate_quantity(geom.get("leg"), f"{path}.leg")
+             orientation = geom.get("orientation", "above")
+             if orientation not in {"above", "below"}:
+                 _err(f"{path}.orientation must be 'above' or 'below'.")
+ 
+-        if gtype == "Collinear":
+-            order = geom.get("order", points)
+-            if not isinstance(order, list) or len(order) < 2:
+-                _err(f"{path}.order must contain at least two points.")
++        elif gtype in {"PairwiseDistances", "Collinear"}:
++            if gtype == "PairwiseDistances" and len(points) < 2:
++                _err(f"{path}.points must contain at least 2 points.")
+ 
+-            for p in order:
+-                if p not in point_ids:
+-                    _err(f"{path}.order references unknown point: {p}")
++            if gtype == "Collinear":
++                order = geom.get("order", points)
++                if not isinstance(order, list) or len(order) < 2:
++                    _err(f"{path}.order must contain at least two points.")
++                for p in order:
++                    if p not in point_ids:
++                        _err(f"{path}.order references unknown point: {p}")
+ 
+             distances = geom.get("distances")
+             if not isinstance(distances, list) or not distances:
+                 _err(f"{path}.distances must be a non-empty list.")
+-
+             for j, item in enumerate(distances):
+-                dpath = f"{path}.distances[{j}]"
++                _validate_distance_item(item, f"{path}.distances[{j}]", point_ids)
++
++        elif gtype == "Midpoint":
++            point = geom.get("point")
++            between = geom.get("between")
++            if point not in point_ids:
++                _err(f"{path}.point references unknown point: {point}")
++            if not isinstance(between, list) or len(between) != 2:
++                _err(f"{path}.between must contain exactly two points.")
++            for p in between:
++                if p not in point_ids:
++                    _err(f"{path}.between references unknown point: {p}")
++
++        elif gtype == "PointOnLine":
++            for key in ["point", "start", "end"]:
++                if geom.get(key) not in point_ids:
++                    _err(f"{path}.{key} references unknown point: {geom.get(key)}")
++            _validate_quantity(geom.get("distance_from_start"), f"{path}.distance_from_start")
++            direction = geom.get("direction", "toward_end")
++            if direction not in {"toward_end", "away_from_end"}:
++                _err(f"{path}.direction must be toward_end or away_from_end.")
++
++        elif gtype == "PerpendicularBisectorPoint":
++            point = geom.get("point")
++            between = geom.get("between")
++            if point not in point_ids:
++                _err(f"{path}.point references unknown point: {point}")
++            if not isinstance(between, list) or len(between) != 2:
++                _err(f"{path}.between must contain exactly two points.")
++            for p in between:
++                if p not in point_ids:
++                    _err(f"{path}.between references unknown point: {p}")
++            _validate_quantity(geom.get("distance_from_segment"), f"{path}.distance_from_segment")
++            orientation = geom.get("orientation", "above")
++            if orientation not in {"above", "below"}:
++                _err(f"{path}.orientation must be 'above' or 'below'.")
+ 
+-                pair = item.get("between")
+-                if not isinstance(pair, list) or len(pair) != 2:
+-                    _err(f"{dpath}.between must contain exactly two points.")
++        elif gtype == "Centroid":
++            point = geom.get("point")
++            of_points = geom.get("of")
++            if point not in point_ids:
++                _err(f"{path}.point references unknown point: {point}")
++            if not isinstance(of_points, list) or len(of_points) < 2:
++                _err(f"{path}.of must contain at least two points.")
++            for p in of_points:
++                if p not in point_ids:
++                    _err(f"{path}.of references unknown point: {p}")
++
++        elif gtype == "FootOfPerpendicular":
++            point = geom.get("point")
++            from_id = geom.get("from")
++            to_line = geom.get("to_line")
++            if point not in point_ids:
++                _err(f"{path}.point references unknown point: {point}")
++            if from_id not in point_ids:
++                _err(f"{path}.from references unknown point: {from_id}")
++            if not isinstance(to_line, list) or len(to_line) != 2:
++                _err(f"{path}.to_line must contain exactly two points.")
++            for p in to_line:
++                if p not in point_ids:
++                    _err(f"{path}.to_line references unknown point: {p}")
++
++        elif gtype == "PerpendicularRaysFromPoint":
++            center = geom.get("center")
++            if center not in point_ids:
++                _err(f"{path}.center references unknown point: {center}")
++            ray_points = geom.get("points")
++            distances = geom.get("distances")
++            if not isinstance(ray_points, list) or not ray_points:
++                _err(f"{path}.points must be a non-empty list.")
++            if not isinstance(distances, list) or len(distances) != len(ray_points):
++                _err(f"{path}.distances must match {path}.points length.")
++            for p in ray_points:
++                if p not in point_ids:
++                    _err(f"{path}.points references unknown point: {p}")
++            for j, distance in enumerate(distances):
++                _validate_quantity(distance, f"{path}.distances[{j}]")
+ 
+-                for p in pair:
+-                    if p not in point_ids:
+-                        _err(f"{dpath}.between references unknown point: {p}")
+ 
+-                pseudo_q = {"value": item.get("value"), "unit": item.get("unit")}
+-                _validate_quantity(pseudo_q, dpath)
++def _validate_medium(schema: dict[str, Any]) -> None:
++    medium = schema.get("medium")
++    if medium is None:
++        return
++    if not isinstance(medium, dict):
++        _err("schema.medium must be an object if provided.")
++    eps = medium.get("relative_permittivity", medium.get("epsilon_r", 1.0))
++    if not isinstance(eps, (int, float)) or eps <= 0:
++        _err("schema.medium.relative_permittivity must be a positive number.")
+ 
+ 
+-def _validate_charges(schema: dict[str, Any], point_ids: set[str]) -> set[str]:
+-    charges = schema.get("charges")
+-    if not isinstance(charges, list) or not charges:
+-        _err("schema.charges must be a non-empty list.")
++def _validate_charges(schema: dict[str, Any], point_ids: set[str], required: bool = True) -> set[str]:
++    charges = schema.get("charges", [])
++    if not charges:
++        if required:
++            _err("schema.charges must be a non-empty list.")
++        return set()
++
++    if not isinstance(charges, list):
++        _err("schema.charges must be a list.")
+ 
+     ids: set[str] = set()
+ 
+@@ -181,7 +319,39 @@ def _validate_charges(schema: dict[str, Any], point_ids: set[str]) -> set[str]:
+     return ids
+ 
+ 
+-def _validate_queries(schema: dict[str, Any], charge_ids: set[str]) -> None:
++def _validate_vectors(schema: dict[str, Any], required: bool = False) -> set[str]:
++    vectors = schema.get("vectors", [])
++    if not vectors:
++        if required:
++            _err("schema.vectors must be a non-empty list for resultant_vector queries.")
++        return set()
++
++    if not isinstance(vectors, list):
++        _err("schema.vectors must be a list.")
++
++    ids: set[str] = set()
++    for i, vec in enumerate(vectors):
++        path = f"vectors[{i}]"
++        if not isinstance(vec, dict):
++            _err(f"{path} must be an object.")
++        vid = vec.get("id")
++        if not isinstance(vid, str) or not vid:
++            _err(f"{path}.id must be a non-empty string.")
++        if vid in ids:
++            _err(f"Duplicate vector id: {vid}")
++        ids.add(vid)
++        _validate_quantity(vec.get("magnitude"), f"{path}.magnitude")
++        if "angle_deg" in vec and not isinstance(vec.get("angle_deg"), (int, float)):
++            _err(f"{path}.angle_deg must be numeric if provided.")
++    return ids
++
++
++def _validate_queries(
++    schema: dict[str, Any],
++    point_ids: set[str],
++    charge_ids: set[str],
++    vector_ids: set[str],
++) -> None:
+     queries = schema.get("queries")
+     if not isinstance(queries, list) or not queries:
+         _err("schema.queries must be a non-empty list.")
+@@ -197,8 +367,22 @@ def _validate_queries(schema: dict[str, Any], charge_ids: set[str]) -> None:
+             _err(f"{path}.type is unsupported: {qtype}")
+ 
+         target = query.get("target")
+-        if target not in charge_ids:
+-            _err(f"{path}.target references unknown charge: {target}")
++        if qtype == "net_force":
++            if target not in charge_ids:
++                _err(f"{path}.target references unknown charge: {target}")
++        elif qtype == "electric_field":
++            if target not in point_ids and target not in charge_ids:
++                _err(f"{path}.target must reference a known point or charge: {target}")
++            exclude = query.get("exclude_sources", [])
++            if exclude is not None:
++                if not isinstance(exclude, list):
++                    _err(f"{path}.exclude_sources must be a list if provided.")
++                for cid in exclude:
++                    if cid not in charge_ids:
++                        _err(f"{path}.exclude_sources references unknown charge: {cid}")
++        elif qtype == "resultant_vector":
++            if target not in {"vectors", "system", None} and target not in vector_ids:
++                _err(f"{path}.target must be 'vectors', 'system', omitted, or a vector id.")
+ 
+         output = query.get("output", "magnitude")
+         if output not in SUPPORTED_OUTPUTS:
+@@ -219,7 +403,16 @@ def validate_schema(schema: dict[str, Any]) -> None:
+     if domain != "electrostatics":
+         _err(f"schema.domain must be 'electrostatics', got {domain!r}.")
+ 
+-    point_ids = _validate_points(schema)
+-    _validate_geometry(schema, point_ids)
+-    charge_ids = _validate_charges(schema, point_ids)
+-    _validate_queries(schema, charge_ids)
++    qtypes = _query_types(schema)
++    vector_only = all(qtype == "resultant_vector" for qtype in qtypes)
++
++    point_ids = _validate_points(schema, required=not vector_only)
++    if point_ids:
++        _validate_geometry(schema, point_ids)
++    elif schema.get("geometry"):
++        _err("schema.geometry requires schema.points.")
++
++    _validate_medium(schema)
++    charge_ids = _validate_charges(schema, point_ids, required=not vector_only)
++    vector_ids = _validate_vectors(schema, required=vector_only)
++    _validate_queries(schema, point_ids, charge_ids, vector_ids)
+diff --git a/src/xai_physics/domains/electrostatics/coordinate_builder.py b/src/xai_physics/domains/electrostatics/coordinate_builder.py
+index 446b3d7..c819c9f 100644
+--- a/src/xai_physics/domains/electrostatics/coordinate_builder.py
++++ b/src/xai_physics/domains/electrostatics/coordinate_builder.py
+@@ -1,4 +1,4 @@
+-﻿from __future__ import annotations
++from __future__ import annotations
+ 
+ import math
+ from typing import Any
+@@ -7,6 +7,9 @@ from xai_physics.core.units import to_si
+ from xai_physics.domains.electrostatics.vector import Vec2
+ 
+ 
++_EPS = 1e-10
++
++
+ def _quantity_to_si(data: dict[str, Any]) -> float:
+     return to_si(float(data["value"]), str(data["unit"]))
+ 
+@@ -24,7 +27,144 @@ def _explicit_points(schema: dict[str, Any]) -> dict[str, Vec2]:
+     return coords
+ 
+ 
+-def _build_equilateral(geom: dict[str, Any], coords: dict[str, Vec2]) -> None:
++def _add_distance(
++    dist_map: dict[tuple[str, str], float],
++    a: str,
++    b: str,
++    d: float,
++) -> None:
++    dist_map[(a, b)] = d
++    dist_map[(b, a)] = d
++
++
++def _collect_distances(schema: dict[str, Any]) -> dict[tuple[str, str], float]:
++    dist_map: dict[tuple[str, str], float] = {}
++
++    for geom in schema.get("geometry", []) or []:
++        gtype = geom.get("type")
++
++        if gtype in {"PairwiseDistances", "Collinear"}:
++            for item in geom.get("distances", []) or []:
++                pair = item.get("between")
++                if isinstance(pair, list) and len(pair) == 2:
++                    _add_distance(
++                        dist_map,
++                        str(pair[0]),
++                        str(pair[1]),
++                        _quantity_to_si({"value": item["value"], "unit": item["unit"]}),
++                    )
++
++        elif gtype == "EquilateralTriangle":
++            points = geom.get("points", [])
++            if len(points) == 3 and "side" in geom:
++                side = _quantity_to_si(geom["side"])
++                a, b, c = points
++                _add_distance(dist_map, a, b, side)
++                _add_distance(dist_map, a, c, side)
++                _add_distance(dist_map, b, c, side)
++
++        elif gtype == "IsoscelesRightTriangle":
++            points = geom.get("points", [])
++            right = geom.get("right_angle_at")
++            if len(points) == 3 and right in points and "leg" in geom:
++                leg = _quantity_to_si(geom["leg"])
++                others = [p for p in points if p != right]
++                _add_distance(dist_map, right, others[0], leg)
++                _add_distance(dist_map, right, others[1], leg)
++                _add_distance(dist_map, others[0], others[1], leg * math.sqrt(2.0))
++
++    return dist_map
++
++
++def _ensure_segment(
++    coords: dict[str, Vec2],
++    dist_map: dict[tuple[str, str], float],
++    a_id: str,
++    b_id: str,
++) -> bool:
++    """Ensure two anchor points exist. Returns True when it created something."""
++    if a_id in coords and b_id in coords:
++        return False
++
++    d = dist_map.get((a_id, b_id))
++    if d is None:
++        return False
++
++    changed = False
++
++    if a_id not in coords and b_id not in coords:
++        coords[a_id] = Vec2(0.0, 0.0)
++        coords[b_id] = Vec2(d, 0.0)
++        return True
++
++    if a_id in coords and b_id not in coords:
++        coords[b_id] = Vec2(coords[a_id].x + d, coords[a_id].y)
++        changed = True
++
++    if b_id in coords and a_id not in coords:
++        coords[a_id] = Vec2(coords[b_id].x - d, coords[b_id].y)
++        changed = True
++
++    return changed
++
++
++def _place_third_by_distances(
++    coords: dict[str, Vec2],
++    dist_map: dict[tuple[str, str], float],
++    a_id: str,
++    b_id: str,
++    c_id: str,
++    orientation: str = "above",
++) -> bool:
++    if c_id in coords:
++        return False
++
++    if a_id not in coords or b_id not in coords:
++        if not _ensure_segment(coords, dist_map, a_id, b_id):
++            return False
++
++    d_ab = (coords[b_id] - coords[a_id]).norm()
++    d_ac = dist_map.get((a_id, c_id))
++    d_bc = dist_map.get((b_id, c_id))
++
++    if d_ab <= 0 or d_ac is None or d_bc is None:
++        return False
++
++    a = coords[a_id]
++    b = coords[b_id]
++    ux = (b.x - a.x) / d_ab
++    uy = (b.y - a.y) / d_ab
++
++    # Unit perpendicular to AB.
++    px = -uy
++    py = ux
++
++    x_along = (d_ac * d_ac + d_ab * d_ab - d_bc * d_bc) / (2.0 * d_ab)
++    h2 = d_ac * d_ac - x_along * x_along
++
++    # Degenerate valid triangle => collinear. Slight negative is usually rounding.
++    if h2 < 0 and abs(h2) <= max(1.0, d_ac * d_ac) * 1e-8:
++        h2 = 0.0
++    if h2 < 0:
++        raise ValueError(
++            f"Inconsistent pairwise distances for {a_id}, {b_id}, {c_id}."
++        )
++
++    sign = -1.0 if orientation == "below" else 1.0
++    height = sign * math.sqrt(h2)
++
++    coords[c_id] = Vec2(
++        a.x + ux * x_along + px * height,
++        a.y + uy * x_along + py * height,
++    )
++    return True
++
++
++def _build_equilateral(
++    geom: dict[str, Any],
++    coords: dict[str, Vec2],
++    dist_map: dict[tuple[str, str], float],
++) -> bool:
+     points = geom["points"]
+     if len(points) != 3:
+         raise ValueError("EquilateralTriangle requires exactly three points.")
+@@ -33,84 +173,357 @@ def _build_equilateral(geom: dict[str, Any], coords: dict[str, Vec2]) -> None:
+     side = _quantity_to_si(geom["side"])
+     orientation = geom.get("orientation", "above")
+ 
+-    # Canonical placement:
+-    # A = (0, 0), B = (side, 0), C = (side/2, ±sqrt(3)/2 side)
+-    if a_id not in coords:
+-        coords[a_id] = Vec2(0.0, 0.0)
++    _add_distance(dist_map, a_id, b_id, side)
++    _add_distance(dist_map, a_id, c_id, side)
++    _add_distance(dist_map, b_id, c_id, side)
++
++    changed = _ensure_segment(coords, dist_map, a_id, b_id)
++    changed = _place_third_by_distances(
++        coords, dist_map, a_id, b_id, c_id, orientation=orientation
++    ) or changed
++    return changed
++
++
++def _build_isosceles_right(
++    geom: dict[str, Any],
++    coords: dict[str, Vec2],
++    dist_map: dict[tuple[str, str], float],
++) -> bool:
++    points = geom["points"]
++    if len(points) != 3:
++        raise ValueError("IsoscelesRightTriangle requires exactly three points.")
++
++    right = geom.get("right_angle_at")
++    if right not in points:
++        raise ValueError("IsoscelesRightTriangle.right_angle_at must be one of points.")
++
++    leg = _quantity_to_si(geom["leg"])
++    orientation = geom.get("orientation", "above")
++    others = [p for p in points if p != right]
++    b_id, c_id = others[0], others[1]
++
++    if right in coords and b_id in coords and c_id in coords:
++        return False
++
++    if right not in coords:
++        coords[right] = Vec2(0.0, 0.0)
+ 
++    changed = False
+     if b_id not in coords:
+-        coords[b_id] = Vec2(coords[a_id].x + side, coords[a_id].y)
++        coords[b_id] = Vec2(coords[right].x + leg, coords[right].y)
++        changed = True
+ 
+     sign = -1.0 if orientation == "below" else 1.0
+-
+     if c_id not in coords:
+-        coords[c_id] = Vec2(
+-            coords[a_id].x + side / 2.0,
+-            coords[a_id].y + sign * math.sqrt(3.0) * side / 2.0,
++        coords[c_id] = Vec2(coords[right].x, coords[right].y + sign * leg)
++        changed = True
++
++    _add_distance(dist_map, right, b_id, leg)
++    _add_distance(dist_map, right, c_id, leg)
++    _add_distance(dist_map, b_id, c_id, leg * math.sqrt(2.0))
++    return changed
++
++
++def _build_pairwise(
++    geom: dict[str, Any],
++    coords: dict[str, Vec2],
++    dist_map: dict[tuple[str, str], float],
++) -> bool:
++    points = list(geom.get("points", []))
++    orientation = geom.get("orientation", "above")
++    changed = False
++
++    for item in geom.get("distances", []) or []:
++        pair = item["between"]
++        _add_distance(
++            dist_map,
++            pair[0],
++            pair[1],
++            _quantity_to_si({"value": item["value"], "unit": item["unit"]}),
+         )
+ 
++    if len(points) == 2:
++        return _ensure_segment(coords, dist_map, points[0], points[1])
++
++    if len(points) >= 3:
++        # Try every pair as anchor and every other point as the third point.
++        for a_id in points:
++            for b_id in points:
++                if a_id == b_id or (a_id, b_id) not in dist_map:
++                    continue
++                if _ensure_segment(coords, dist_map, a_id, b_id):
++                    changed = True
++                for c_id in points:
++                    if c_id in {a_id, b_id}:
++                        continue
++                    if (a_id, c_id) in dist_map and (b_id, c_id) in dist_map:
++                        if _place_third_by_distances(
++                            coords, dist_map, a_id, b_id, c_id, orientation=orientation
++                        ):
++                            changed = True
++        return changed
++
++    return False
++
+ 
+-def _build_collinear(geom: dict[str, Any], coords: dict[str, Vec2]) -> None:
++def _build_collinear(
++    geom: dict[str, Any],
++    coords: dict[str, Vec2],
++    dist_map: dict[tuple[str, str], float],
++) -> bool:
+     order = geom.get("order") or geom.get("points")
+     if not isinstance(order, list) or len(order) < 2:
+         raise ValueError("Collinear geometry requires order or points with at least two ids.")
+ 
+-    distances = geom.get("distances", [])
+-    if not isinstance(distances, list):
+-        raise ValueError("Collinear.distances must be a list.")
++    for item in geom.get("distances", []) or []:
++        pair = item["between"]
++        _add_distance(
++            dist_map,
++            pair[0],
++            pair[1],
++            _quantity_to_si({"value": item["value"], "unit": item["unit"]}),
++        )
+ 
+-    # Canonical placement on x-axis.
+     first = order[0]
+     if first not in coords:
+         coords[first] = Vec2(0.0, 0.0)
+ 
+-    # Build a quick map for distance between adjacent ordered points.
+-    dist_map: dict[tuple[str, str], float] = {}
+-    for item in distances:
+-        pair = item["between"]
+-        if len(pair) != 2:
+-            raise ValueError("Distance.between must contain exactly two point ids.")
+-        d = _quantity_to_si({"value": item["value"], "unit": item["unit"]})
+-        dist_map[(pair[0], pair[1])] = d
+-        dist_map[(pair[1], pair[0])] = d
+-
+-    x = coords[first].x
+-
++    changed = False
+     for left, right in zip(order, order[1:]):
+         key = (left, right)
+         if key not in dist_map:
+             raise ValueError(f"Missing distance between adjacent points {left}-{right}.")
++        if right not in coords:
++            coords[right] = Vec2(coords[left].x + dist_map[key], coords[first].y)
++            changed = True
++
++    return changed
++
+ 
+-        x = coords[left].x + dist_map[key]
+-        coords[right] = Vec2(x, coords[first].y)
++def _build_midpoint(
++    geom: dict[str, Any],
++    coords: dict[str, Vec2],
++    dist_map: dict[tuple[str, str], float],
++) -> bool:
++    point_id = geom.get("point")
++    between = geom.get("between", [])
++    if not isinstance(point_id, str) or len(between) != 2:
++        raise ValueError("Midpoint requires point and between=[A,B].")
++
++    a_id, b_id = between
++    _ensure_segment(coords, dist_map, a_id, b_id)
++
++    if a_id not in coords or b_id not in coords:
++        raise ValueError(f"Cannot build midpoint {point_id}; missing endpoints {a_id}, {b_id}.")
++
++    old = coords.get(point_id)
++    coords[point_id] = Vec2(
++        (coords[a_id].x + coords[b_id].x) / 2.0,
++        (coords[a_id].y + coords[b_id].y) / 2.0,
++    )
++    return old != coords[point_id]
++
++
++def _build_point_on_line(
++    geom: dict[str, Any],
++    coords: dict[str, Vec2],
++    dist_map: dict[tuple[str, str], float],
++) -> bool:
++    point_id = geom.get("point")
++    start = geom.get("start")
++    end = geom.get("end")
++    if not all(isinstance(x, str) for x in [point_id, start, end]):
++        raise ValueError("PointOnLine requires point, start, and end.")
++
++    _ensure_segment(coords, dist_map, start, end)
++    if start not in coords or end not in coords:
++        raise ValueError(f"Cannot build PointOnLine {point_id}; missing {start}-{end}.")
++
++    d = _quantity_to_si(geom["distance_from_start"])
++    direction = geom.get("direction", "toward_end")
++
++    start_pos = coords[start]
++    end_pos = coords[end]
++    axis = end_pos - start_pos
++    axis_norm = axis.norm()
++    if axis_norm == 0:
++        raise ValueError("PointOnLine endpoints coincide.")
++
++    unit = axis.scale(1.0 / axis_norm)
++    sign = -1.0 if direction == "away_from_end" else 1.0
++    old = coords.get(point_id)
++    coords[point_id] = start_pos + unit.scale(sign * d)
++    return old != coords[point_id]
++
++
++def _build_perpendicular_bisector_point(
++    geom: dict[str, Any],
++    coords: dict[str, Vec2],
++    dist_map: dict[tuple[str, str], float],
++) -> bool:
++    point_id = geom.get("point")
++    between = geom.get("between", [])
++    if not isinstance(point_id, str) or len(between) != 2:
++        raise ValueError("PerpendicularBisectorPoint requires point and between=[A,B].")
++
++    a_id, b_id = between
++    _ensure_segment(coords, dist_map, a_id, b_id)
++    if a_id not in coords or b_id not in coords:
++        raise ValueError(
++            f"Cannot build perpendicular-bisector point {point_id}; missing endpoints."
++        )
++
++    h = _quantity_to_si(geom["distance_from_segment"])
++    orientation = geom.get("orientation", "above")
++    sign = -1.0 if orientation == "below" else 1.0
++
++    a = coords[a_id]
++    b = coords[b_id]
++    axis = b - a
++    d = axis.norm()
++    if d == 0:
++        raise ValueError("PerpendicularBisectorPoint endpoints coincide.")
++
++    mid = Vec2((a.x + b.x) / 2.0, (a.y + b.y) / 2.0)
++    px = -axis.y / d
++    py = axis.x / d
++
++    old = coords.get(point_id)
++    coords[point_id] = Vec2(mid.x + sign * px * h, mid.y + sign * py * h)
++    return old != coords[point_id]
++
++
++def _build_centroid(
++    geom: dict[str, Any],
++    coords: dict[str, Vec2],
++    _dist_map: dict[tuple[str, str], float],
++) -> bool:
++    point_id = geom.get("point")
++    of_points = geom.get("of", [])
++    if not isinstance(point_id, str) or not isinstance(of_points, list) or len(of_points) < 2:
++        raise ValueError("Centroid requires point and of=[...].")
++
++    if not all(p in coords for p in of_points):
++        return False
++
++    old = coords.get(point_id)
++    coords[point_id] = Vec2(
++        sum(coords[p].x for p in of_points) / len(of_points),
++        sum(coords[p].y for p in of_points) / len(of_points),
++    )
++    return old != coords[point_id]
++
++
++def _build_foot_of_perpendicular(
++    geom: dict[str, Any],
++    coords: dict[str, Vec2],
++    _dist_map: dict[tuple[str, str], float],
++) -> bool:
++    point_id = geom.get("point")
++    from_id = geom.get("from")
++    to_line = geom.get("to_line", [])
++    if not isinstance(point_id, str) or not isinstance(from_id, str) or len(to_line) != 2:
++        raise ValueError("FootOfPerpendicular requires point, from, and to_line=[B,C].")
++
++    b_id, c_id = to_line
++    if from_id not in coords or b_id not in coords or c_id not in coords:
++        return False
++
++    a = coords[from_id]
++    b = coords[b_id]
++    c = coords[c_id]
++    bc = c - b
++    denom = bc.x * bc.x + bc.y * bc.y
++    if denom == 0:
++        raise ValueError("FootOfPerpendicular line endpoints coincide.")
++
++    t = ((a.x - b.x) * bc.x + (a.y - b.y) * bc.y) / denom
++    old = coords.get(point_id)
++    coords[point_id] = Vec2(b.x + t * bc.x, b.y + t * bc.y)
++    return old != coords[point_id]
++
++
++def _build_perpendicular_rays_from_point(
++    geom: dict[str, Any],
++    coords: dict[str, Vec2],
++    _dist_map: dict[tuple[str, str], float],
++) -> bool:
++    """Place source points on perpendicular rays from a center point.
++
++    Useful for problems saying two fields at M are perpendicular and sources are each
++    a known distance from M. Canonical placement: first point on +x, second on +y.
++    """
++    center = geom.get("center")
++    points = geom.get("points", [])
++    distances = geom.get("distances", [])
++    if not isinstance(center, str) or len(points) != len(distances):
++        raise ValueError("PerpendicularRaysFromPoint requires center, points, distances.")
++
++    if center not in coords:
++        coords[center] = Vec2(0.0, 0.0)
++
++    directions = [Vec2(1.0, 0.0), Vec2(0.0, 1.0), Vec2(-1.0, 0.0), Vec2(0.0, -1.0)]
++    changed = False
++    for i, point_id in enumerate(points):
++        if point_id in coords:
++            continue
++        d = _quantity_to_si(distances[i])
++        u = directions[i % len(directions)]
++        coords[point_id] = Vec2(coords[center].x + u.x * d, coords[center].y + u.y * d)
++        changed = True
++    return changed
+ 
+ 
+ def build_coordinates(schema: dict[str, Any]) -> dict[str, Vec2]:
+     """
+-    Build canonical 2D coordinates from explicit point coordinates
+-    and simple geometry relations.
++    Build canonical 2D coordinates from explicit coordinates and geometry relations.
+ 
+-    Supported v0:
++    Supported geometry:
+     - explicit points with x,y
+     - EquilateralTriangle
++    - IsoscelesRightTriangle
++    - PairwiseDistances for 2 or 3 points (including degenerate collinear triples)
+     - Collinear
++    - Midpoint
++    - PointOnLine
++    - PerpendicularBisectorPoint
++    - Centroid
++    - FootOfPerpendicular
++    - PerpendicularRaysFromPoint
+     """
+     coords = _explicit_points(schema)
++    dist_map = _collect_distances(schema)
++    geometry = schema.get("geometry", []) or []
+ 
+-    for geom in schema.get("geometry", []):
+-        gtype = geom.get("type")
++    builders = {
++        "EquilateralTriangle": _build_equilateral,
++        "IsoscelesRightTriangle": _build_isosceles_right,
++        "PairwiseDistances": _build_pairwise,
++        "Collinear": _build_collinear,
++        "Midpoint": _build_midpoint,
++        "PointOnLine": _build_point_on_line,
++        "PerpendicularBisectorPoint": _build_perpendicular_bisector_point,
++        "Centroid": _build_centroid,
++        "FootOfPerpendicular": _build_foot_of_perpendicular,
++        "PerpendicularRaysFromPoint": _build_perpendicular_rays_from_point,
++    }
+ 
+-        if gtype == "EquilateralTriangle":
+-            _build_equilateral(geom, coords)
+-        elif gtype == "Collinear":
+-            _build_collinear(geom, coords)
+-        else:
+-            raise ValueError(f"Unsupported geometry type: {gtype}")
++    # Multiple passes allow derived points (midpoint/foot/centroid) to depend on
++    # coordinates built by earlier or later geometry blocks.
++    for _ in range(max(1, len(geometry) + 2)):
++        changed = False
++        for geom in geometry:
++            gtype = geom.get("type")
++            builder = builders.get(gtype)
++            if builder is None:
++                raise ValueError(f"Unsupported geometry type: {gtype}")
++            changed = builder(geom, coords, dist_map) or changed
++        if not changed:
++            break
+ 
+     point_ids = {p["id"] for p in schema.get("points", [])}
+-
+     missing = sorted(point_ids - set(coords))
+     if missing:
+         raise ValueError(f"Cannot build coordinates for points: {missing}")
+ 
+-    return coords
++    return coords
+diff --git a/src/xai_physics/domains/electrostatics/engine.py b/src/xai_physics/domains/electrostatics/engine.py
+index 7101e0a..512af54 100644
+--- a/src/xai_physics/domains/electrostatics/engine.py
++++ b/src/xai_physics/domains/electrostatics/engine.py
+@@ -1,178 +1,283 @@
+-﻿from __future__ import annotations
+-
+-from dataclasses import dataclass
+-from typing import Any, Optional
+-
+-from xai_physics.core.result import SolveResult
+-from xai_physics.core.units import to_si, convert
+-from xai_physics.domains.electrostatics.contract import validate_schema
+-from xai_physics.domains.electrostatics.vector import Vec2
+-from xai_physics.domains.electrostatics.coordinate_builder import build_coordinates
+-
+-
+-K_COULOMB = 9.0e9
+-
+-
+-@dataclass
+-class Point:
+-    id: str
+-    position_m: Vec2
+-
+-
+-@dataclass
+-class Charge:
+-    id: str
+-    charge_C: float
+-    point_id: str
+-
+-
+-def _quantity_to_si(data: dict[str, Any]) -> float:
+-    return to_si(float(data["value"]), str(data["unit"]))
+-
+-
+-def _build_points(schema: dict[str, Any]) -> dict[str, Point]:
+-    coords = build_coordinates(schema)
+-    return {
+-        point_id: Point(id=point_id, position_m=pos)
+-        for point_id, pos in coords.items()
+-    }
+-
+-
+-def _build_charges(schema: dict[str, Any]) -> dict[str, Charge]:
+-    charges: dict[str, Charge] = {}
+-
+-    for item in schema.get("charges", []):
+-        charge = Charge(
+-            id=item["id"],
+-            charge_C=_quantity_to_si(item["charge"]),
+-            point_id=item["at"],
+-        )
+-        charges[charge.id] = charge
+-
+-    return charges
+-
+-
+-def _net_force_on(
+-    target_id: str,
+-    points: dict[str, Point],
+-    charges: dict[str, Charge],
+-) -> Vec2:
+-    if target_id not in charges:
+-        raise ValueError(f"Unknown target charge: {target_id}")
+-
+-    target = charges[target_id]
+-    target_pos = points[target.point_id].position_m
+-
+-    total = Vec2(0.0, 0.0)
+-
+-    for source_id, source in charges.items():
+-        if source_id == target_id:
+-            continue
+-
+-        source_pos = points[source.point_id].position_m
+-
+-        # Vector from source charge to target charge.
+-        r_vec = target_pos - source_pos
+-        r = r_vec.norm()
+-
+-        if r == 0:
+-            raise ValueError(
+-                f"Charges {target_id} and {source_id} occupy the same point."
+-            )
+-
+-        # Coulomb vector force on target due to source:
+-        # F = k q_target q_source (r_target - r_source) / |r|^3
+-        scale = K_COULOMB * target.charge_C * source.charge_C / (r ** 3)
+-        contribution = r_vec.scale(scale)
+-        total = total + contribution
+-
+-    return total
+-
+-
+-def _format_value(value_si: float, si_unit: str, output_unit: Optional[str]) -> str:
+-    if output_unit is None:
+-        output_unit = si_unit
+-    value = convert(value_si, si_unit, output_unit)
+-    return f"{value:g} {output_unit}"
+-
+-
+-def _answer_query(
+-    query: dict[str, Any],
+-    points: dict[str, Point],
+-    charges: dict[str, Charge],
+-):
+-    qtype = query.get("type")
+-    target = query.get("target")
+-    output = query.get("output", "magnitude")
+-    unit = query.get("unit", "N")
+-
+-    if qtype != "net_force":
+-        raise ValueError(f"Unsupported query type: {qtype}")
+-
+-    force = _net_force_on(target, points, charges)
+-
+-    if output == "magnitude":
+-        return _format_value(force.norm(), "N", unit)
+-
+-    if output == "x_component":
+-        return _format_value(force.x, "N", unit)
+-
+-    if output == "y_component":
+-        return _format_value(force.y, "N", unit)
+-
+-    if output == "components":
+-        return {
+-            "Fx": _format_value(force.x, "N", unit),
+-            "Fy": _format_value(force.y, "N", unit),
+-            "magnitude": _format_value(force.norm(), "N", unit),
+-        }
+-
+-    raise ValueError(f"Unsupported output: {output}")
+-
+-
+-def solve_schema(schema: dict[str, Any]) -> SolveResult:
+-    result = SolveResult(status="solved", domain="electrostatics")
+-
+-    try:
+-        validate_schema(schema)
+-
+-        points = _build_points(schema)
+-        charges = _build_charges(schema)
+-
+-        result.add_step(
+-            "Build electrostatic system",
+-            "Built points and charges from canonical schema.",
+-            points={
+-                pid: {
+-                    "x_m": point.position_m.x,
+-                    "y_m": point.position_m.y,
+-                }
+-                for pid, point in points.items()
+-            },
+-            charges={
+-                cid: {
+-                    "charge_C": charge.charge_C,
+-                    "at": charge.point_id,
+-                }
+-                for cid, charge in charges.items()
+-            },
+-        )
+-
+-        queries = schema.get("queries", [])
+-        if not queries:
+-            raise ValueError("Schema has no query.")
+-
+-        answer = _answer_query(queries[0], points, charges)
+-        result.answer = answer
+-
+-        result.add_step(
+-            "Final answer",
+-            f"The requested {queries[0].get('type')} is {answer}.",
+-        )
+-
+-        return result
+-
+-    except Exception as exc:
+-        result.status = "solve_failed"
+-        result.error = str(exc)
+-        return result
++from __future__ import annotations
++
++from dataclasses import dataclass
++import math
++from typing import Any, Optional
++
++from xai_physics.core.result import SolveResult
++from xai_physics.core.units import to_si, convert
++from xai_physics.domains.electrostatics.contract import validate_schema
++from xai_physics.domains.electrostatics.vector import Vec2
++from xai_physics.domains.electrostatics.coordinate_builder import build_coordinates
++
++
++K_COULOMB = 9.0e9
++
++
++@dataclass
++class Point:
++    id: str
++    position_m: Vec2
++
++
++@dataclass
++class Charge:
++    id: str
++    charge_C: float
++    point_id: str
++
++
++@dataclass
++class VectorInput:
++    id: str
++    value: Vec2
++    unit: str
++
++
++def _quantity_to_si(data: dict[str, Any]) -> float:
++    return to_si(float(data["value"]), str(data["unit"]))
++
++
++def _build_points(schema: dict[str, Any]) -> dict[str, Point]:
++    coords = build_coordinates(schema)
++    return {point_id: Point(id=point_id, position_m=pos) for point_id, pos in coords.items()}
++
++
++def _build_charges(schema: dict[str, Any]) -> dict[str, Charge]:
++    charges: dict[str, Charge] = {}
++
++    for item in schema.get("charges", []) or []:
++        charge = Charge(
++            id=item["id"],
++            charge_C=_quantity_to_si(item["charge"]),
++            point_id=item["at"],
++        )
++        charges[charge.id] = charge
++
++    return charges
++
++
++def _relative_permittivity(schema: dict[str, Any]) -> float:
++    medium = schema.get("medium") or {}
++    if not isinstance(medium, dict):
++        return 1.0
++    return float(medium.get("relative_permittivity", medium.get("epsilon_r", 1.0)))
++
++
++def _k_eff(schema: dict[str, Any]) -> float:
++    return K_COULOMB / _relative_permittivity(schema)
++
++
++def _net_force_on(
++    target_id: str,
++    points: dict[str, Point],
++    charges: dict[str, Charge],
++    k_eff: float,
++) -> Vec2:
++    if target_id not in charges:
++        raise ValueError(f"Unknown target charge: {target_id}")
++
++    target = charges[target_id]
++    target_pos = points[target.point_id].position_m
++
++    total = Vec2(0.0, 0.0)
++
++    for source_id, source in charges.items():
++        if source_id == target_id:
++            continue
++
++        source_pos = points[source.point_id].position_m
++
++        # Vector from source charge to target charge.
++        r_vec = target_pos - source_pos
++        r = r_vec.norm()
++
++        if r == 0:
++            raise ValueError(f"Charges {target_id} and {source_id} occupy the same point.")
++
++        # Coulomb vector force on target due to source:
++        # F = k q_target q_source (r_target - r_source) / |r|^3
++        scale = k_eff * target.charge_C * source.charge_C / (r**3)
++        total = total + r_vec.scale(scale)
++
++    return total
++
++
++def _target_point_and_exclusions(
++    query: dict[str, Any],
++    points: dict[str, Point],
++    charges: dict[str, Charge],
++) -> tuple[str, set[str]]:
++    target = query.get("target")
++    exclude_sources = set(query.get("exclude_sources", []) or [])
++
++    if target in charges:
++        charge = charges[target]
++        exclude_sources.add(target)
++        return charge.point_id, exclude_sources
++
++    if target in points:
++        # Electric field at a point occupied by a source charge usually means the
++        # external field at that location, so exclude same-location charges.
++        for cid, charge in charges.items():
++            if charge.point_id == target:
++                exclude_sources.add(cid)
++        return target, exclude_sources
++
++    raise ValueError(f"Unknown electric-field target: {target}")
++
++
++def _net_electric_field_at(
++    query: dict[str, Any],
++    points: dict[str, Point],
++    charges: dict[str, Charge],
++    k_eff: float,
++) -> Vec2:
++    target_point_id, exclude_sources = _target_point_and_exclusions(query, points, charges)
++    target_pos = points[target_point_id].position_m
++
++    total = Vec2(0.0, 0.0)
++
++    for source_id, source in charges.items():
++        if source_id in exclude_sources:
++            continue
++
++        source_pos = points[source.point_id].position_m
++        r_vec = target_pos - source_pos
++        r = r_vec.norm()
++
++        if r == 0:
++            raise ValueError(
++                f"Cannot compute field from charge {source_id} at its own point {target_point_id}."
++            )
++
++        # Electric field due to source charge:
++        # E = k q_source (r_target - r_source) / |r|^3
++        total = total + r_vec.scale(k_eff * source.charge_C / (r**3))
++
++    return total
++
++
++def _build_vectors(schema: dict[str, Any]) -> dict[str, VectorInput]:
++    vectors: dict[str, VectorInput] = {}
++
++    for i, item in enumerate(schema.get("vectors", []) or []):
++        magnitude_data = item["magnitude"]
++        mag_si = _quantity_to_si(magnitude_data)
++        angle_deg = float(item.get("angle_deg", 0.0 if i == 0 else 0.0))
++        theta = math.radians(angle_deg)
++        vectors[item["id"]] = VectorInput(
++            id=item["id"],
++            value=Vec2(mag_si * math.cos(theta), mag_si * math.sin(theta)),
++            unit=str(magnitude_data["unit"]),
++        )
++
++    return vectors
++
++
++def _resultant_vector(vectors: dict[str, VectorInput]) -> Vec2:
++    total = Vec2(0.0, 0.0)
++    for item in vectors.values():
++        total = total + item.value
++    return total
++
++
++def _format_value(value_si: float, si_unit: str, output_unit: Optional[str]) -> str:
++    if output_unit is None:
++        output_unit = si_unit
++    value = convert(value_si, si_unit, output_unit)
++    return f"{value:g} {output_unit}"
++
++
++def _format_vector(vec: Vec2, si_unit: str, output_unit: Optional[str]):
++    return {
++        "Fx" if si_unit == "N" else "Ex": _format_value(vec.x, si_unit, output_unit),
++        "Fy" if si_unit == "N" else "Ey": _format_value(vec.y, si_unit, output_unit),
++        "magnitude": _format_value(vec.norm(), si_unit, output_unit),
++    }
++
++
++def _answer_vector(vec: Vec2, output: str, si_unit: str, unit: str):
++    if output == "magnitude":
++        return _format_value(vec.norm(), si_unit, unit)
++    if output == "x_component":
++        return _format_value(vec.x, si_unit, unit)
++    if output == "y_component":
++        return _format_value(vec.y, si_unit, unit)
++    if output == "components":
++        return _format_vector(vec, si_unit, unit)
++    raise ValueError(f"Unsupported output: {output}")
++
++
++def _answer_query(
++    query: dict[str, Any],
++    points: dict[str, Point],
++    charges: dict[str, Charge],
++    vectors: dict[str, VectorInput],
++    k_eff: float,
++):
++    qtype = query.get("type")
++    target = query.get("target")
++    output = query.get("output", "magnitude")
++
++    if qtype == "net_force":
++        force = _net_force_on(str(target), points, charges, k_eff=k_eff)
++        return _answer_vector(force, output, "N", query.get("unit", "N"))
++
++    if qtype == "electric_field":
++        field = _net_electric_field_at(query, points, charges, k_eff=k_eff)
++        return _answer_vector(field, output, "V/m", query.get("unit", "V/m"))
++
++    if qtype == "resultant_vector":
++        result = _resultant_vector(vectors)
++        return _answer_vector(result, output, "N", query.get("unit", "N"))
++
++    raise ValueError(f"Unsupported query type: {qtype}")
++
++
++def solve_schema(schema: dict[str, Any]) -> SolveResult:
++    result = SolveResult(status="solved", domain="electrostatics")
++
++    try:
++        validate_schema(schema)
++
++        qtypes = [q.get("type") for q in schema.get("queries", [])]
++        vector_only = bool(qtypes) and all(qtype == "resultant_vector" for qtype in qtypes)
++
++        points: dict[str, Point] = {} if vector_only else _build_points(schema)
++        charges = {} if vector_only else _build_charges(schema)
++        vectors = _build_vectors(schema)
++        k_eff = _k_eff(schema)
++
++        result.add_step(
++            "Build electrostatic system",
++            "Built canonical vectors/points/charges from schema.",
++            points={
++                pid: {"x_m": point.position_m.x, "y_m": point.position_m.y}
++                for pid, point in points.items()
++            },
++            charges={
++                cid: {"charge_C": charge.charge_C, "at": charge.point_id}
++                for cid, charge in charges.items()
++            },
++            vectors={
++                vid: {"x": vec.value.x, "y": vec.value.y}
++                for vid, vec in vectors.items()
++            },
++            relative_permittivity=_relative_permittivity(schema),
++        )
++
++        queries = schema.get("queries", [])
++        if not queries:
++            raise ValueError("Schema has no query.")
++
++        answer = _answer_query(queries[0], points, charges, vectors, k_eff=k_eff)
++        result.answer = answer
++
++        result.add_step("Final answer", f"The requested {queries[0].get('type')} is {answer}.")
++        return result
++
++    except Exception as exc:
++        result.status = "solve_failed"
++        result.error = str(exc)
++        return result
+diff --git a/src/xai_physics/domains/electrostatics/retrieval/__init__.py b/src/xai_physics/domains/electrostatics/retrieval/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/src/xai_physics/domains/electrostatics/retrieval/example_store.py b/src/xai_physics/domains/electrostatics/retrieval/example_store.py
+new file mode 100644
+index 0000000..5d78e97
+--- /dev/null
++++ b/src/xai_physics/domains/electrostatics/retrieval/example_store.py
+@@ -0,0 +1,33 @@
++from __future__ import annotations
++
++import json
++from pathlib import Path
++from typing import Any
++
++from xai_physics.domains.electrostatics.retrieval.types import SchemaExample
++
++
++DEFAULT_EXAMPLE_PATH = Path(__file__).parent / "examples.jsonl"
++
++
++def load_examples(path: Path = DEFAULT_EXAMPLE_PATH) -> list[SchemaExample]:
++    examples: list[SchemaExample] = []
++    with path.open("r", encoding="utf-8-sig") as f:
++        for line_no, line in enumerate(f, 1):
++            line = line.strip()
++            if not line:
++                continue
++            try:
++                raw: dict[str, Any] = json.loads(line)
++            except json.JSONDecodeError as exc:
++                raise ValueError(f"Invalid electrostatics example JSONL at line {line_no}: {exc}") from exc
++            examples.append(
++                SchemaExample(
++                    id=raw["id"],
++                    domain=raw.get("domain", "electrostatics"),
++                    tags=list(raw.get("tags", [])),
++                    problem=raw["problem"],
++                    schema=raw["schema"],
++                )
++            )
++    return examples
+diff --git a/src/xai_physics/domains/electrostatics/retrieval/examples.jsonl b/src/xai_physics/domains/electrostatics/retrieval/examples.jsonl
+new file mode 100644
+index 0000000..781dca2
+--- /dev/null
++++ b/src/xai_physics/domains/electrostatics/retrieval/examples.jsonl
+@@ -0,0 +1,13 @@
++{"id": "elec_pairwise_triangle_ld003", "domain": "electrostatics", "tags": ["net_force", "pairwise_distances", "triangle", "coulomb"], "problem": "Points A and B are separated by 20 cm in air. Charges q1 = -3 × 10^-6 C and q2 = 8 × 10^-6 C are placed at A and B, respectively. A test charge q3 = 2 × 10^-6 C is placed at point C such that AC = 12 cm and BC = 16 cm. Calculate the magnitude of the electric force acting on q3.", "schema": {"domain": "electrostatics", "points": [{"id": "A"}, {"id": "B"}, {"id": "C"}], "geometry": [{"type": "PairwiseDistances", "points": ["A", "B", "C"], "distances": [{"between": ["A", "B"], "value": 20, "unit": "cm"}, {"between": ["A", "C"], "value": 12, "unit": "cm"}, {"between": ["B", "C"], "value": 16, "unit": "cm"}], "orientation": "above"}], "charges": [{"id": "q1", "charge": {"value": -3e-06, "unit": "C"}, "at": "A"}, {"id": "q2", "charge": {"value": 8e-06, "unit": "C"}, "at": "B"}, {"id": "q3", "charge": {"value": 2e-06, "unit": "C"}, "at": "C"}], "queries": [{"type": "net_force", "target": "q3", "output": "magnitude", "unit": "N"}]}}
++{"id": "elec_equilateral_force", "domain": "electrostatics", "tags": ["net_force", "equilateral", "triangle", "coulomb"], "problem": "Three charges q1 = +2 μC, q2 = +2 μC, and q3 = -2 μC are placed at the three vertices of an equilateral triangle with side length 10 cm. Calculate the magnitude of the net electric force acting on q3.", "schema": {"domain": "electrostatics", "points": [{"id": "A"}, {"id": "B"}, {"id": "C"}], "geometry": [{"type": "EquilateralTriangle", "points": ["A", "B", "C"], "side": {"value": 10, "unit": "cm"}, "orientation": "above"}], "charges": [{"id": "q1", "charge": {"value": 2, "unit": "uC"}, "at": "A"}, {"id": "q2", "charge": {"value": 2, "unit": "uC"}, "at": "B"}, {"id": "q3", "charge": {"value": -2, "unit": "uC"}, "at": "C"}], "queries": [{"type": "net_force", "target": "q3", "output": "magnitude", "unit": "N"}]}}
++{"id": "elec_isosceles_right_force", "domain": "electrostatics", "tags": ["net_force", "isosceles_right", "right_triangle", "coulomb"], "problem": "Three identical charges q = +1 μC are placed at the three vertices of an isosceles right triangle, with legs of length a = 10 cm. Calculate the net force acting on the charge at the right angle vertex.", "schema": {"domain": "electrostatics", "points": [{"id": "A"}, {"id": "B"}, {"id": "C"}], "geometry": [{"type": "IsoscelesRightTriangle", "points": ["A", "B", "C"], "right_angle_at": "A", "leg": {"value": 10, "unit": "cm"}, "orientation": "above"}], "charges": [{"id": "q1", "charge": {"value": 1, "unit": "uC"}, "at": "A"}, {"id": "q2", "charge": {"value": 1, "unit": "uC"}, "at": "B"}, {"id": "q3", "charge": {"value": 1, "unit": "uC"}, "at": "C"}], "queries": [{"type": "net_force", "target": "q1", "output": "magnitude", "unit": "N"}]}}
++{"id": "elec_midpoint_force", "domain": "electrostatics", "tags": ["net_force", "midpoint", "collinear", "coulomb"], "problem": "Two charges q1 = +1 μC and q2 = +1 μC are placed at points A and B, separated by 4 cm. Find the net force acting on a test charge q0 = +2 μC placed at point M, the midpoint of AB.", "schema": {"domain": "electrostatics", "points": [{"id": "A"}, {"id": "B"}, {"id": "M"}], "geometry": [{"type": "PairwiseDistances", "points": ["A", "B"], "distances": [{"between": ["A", "B"], "value": 4, "unit": "cm"}]}, {"type": "Midpoint", "point": "M", "between": ["A", "B"]}], "charges": [{"id": "q1", "charge": {"value": 1, "unit": "uC"}, "at": "A"}, {"id": "q2", "charge": {"value": 1, "unit": "uC"}, "at": "B"}, {"id": "q0", "charge": {"value": 2, "unit": "uC"}, "at": "M"}], "queries": [{"type": "net_force", "target": "q0", "output": "magnitude", "unit": "N"}]}}
++{"id": "elec_perpendicular_bisector_force", "domain": "electrostatics", "tags": ["net_force", "perpendicular_bisector", "coulomb"], "problem": "Two charges q1 = +2 × 10^-6 C and q2 = +2 × 10^-6 C are placed at A and B, separated by 6 cm. A test charge q = 10^-6 C is placed at M, which lies on the perpendicular bisector of AB, 3 cm from AB. Calculate the net force on q.", "schema": {"domain": "electrostatics", "points": [{"id": "A"}, {"id": "B"}, {"id": "M"}], "geometry": [{"type": "PairwiseDistances", "points": ["A", "B"], "distances": [{"between": ["A", "B"], "value": 6, "unit": "cm"}]}, {"type": "PerpendicularBisectorPoint", "point": "M", "between": ["A", "B"], "distance_from_segment": {"value": 3, "unit": "cm"}, "orientation": "above"}], "charges": [{"id": "q1", "charge": {"value": 2e-06, "unit": "C"}, "at": "A"}, {"id": "q2", "charge": {"value": 2e-06, "unit": "C"}, "at": "B"}, {"id": "q", "charge": {"value": 1e-06, "unit": "C"}, "at": "M"}], "queries": [{"type": "net_force", "target": "q", "output": "magnitude", "unit": "N"}]}}
++{"id": "elec_resultant_forces_angle", "domain": "electrostatics", "tags": ["resultant_vector", "forces_given", "angle"], "problem": "Two electric forces with magnitudes of 5 N and 12 N act at an angle of 60° to each other. Calculate the resultant force.", "schema": {"domain": "electrostatics", "vectors": [{"id": "F1", "magnitude": {"value": 5, "unit": "N"}, "angle_deg": 0}, {"id": "F2", "magnitude": {"value": 12, "unit": "N"}, "angle_deg": 60}], "queries": [{"type": "resultant_vector", "target": "vectors", "output": "magnitude", "unit": "N"}]}}
++{"id": "elec_resultant_same_direction", "domain": "electrostatics", "tags": ["resultant_vector", "forces_given", "same_direction"], "problem": "Two electric forces are acting in the same direction, with magnitudes of 3 N and 4 N respectively. What is the resultant force?", "schema": {"domain": "electrostatics", "vectors": [{"id": "F1", "magnitude": {"value": 3, "unit": "N"}, "angle_deg": 0}, {"id": "F2", "magnitude": {"value": 4, "unit": "N"}, "angle_deg": 0}], "queries": [{"type": "resultant_vector", "target": "vectors", "output": "magnitude", "unit": "N"}]}}
++{"id": "elec_field_pairwise", "domain": "electrostatics", "tags": ["electric_field", "pairwise_distances", "triangle"], "problem": "At two points A and B, separated by 20 cm in air, two point charges q1 = 4 × 10^-6 C and q2 = -6.4 × 10^-6 C are placed. Determine the electric field strength at point C, knowing that AC = 12 cm and BC = 16 cm.", "schema": {"domain": "electrostatics", "points": [{"id": "A"}, {"id": "B"}, {"id": "C"}], "geometry": [{"type": "PairwiseDistances", "points": ["A", "B", "C"], "distances": [{"between": ["A", "B"], "value": 20, "unit": "cm"}, {"between": ["A", "C"], "value": 12, "unit": "cm"}, {"between": ["B", "C"], "value": 16, "unit": "cm"}], "orientation": "above"}], "charges": [{"id": "q1", "charge": {"value": 4e-06, "unit": "C"}, "at": "A"}, {"id": "q2", "charge": {"value": -6.4e-06, "unit": "C"}, "at": "B"}], "queries": [{"type": "electric_field", "target": "C", "output": "magnitude", "unit": "V/m"}]}}
++{"id": "elec_field_midpoint_medium", "domain": "electrostatics", "tags": ["electric_field", "midpoint", "dielectric_medium"], "problem": "Determine the electric field produced by q1 = 2 × 10^-7 C and q2 = -4 × 10^-7 C at the midpoint M of AB. The charges are separated by 10 cm in alcohol with dielectric constant ε = 2.2.", "schema": {"domain": "electrostatics", "medium": {"relative_permittivity": 2.2}, "points": [{"id": "A"}, {"id": "B"}, {"id": "M"}], "geometry": [{"type": "PairwiseDistances", "points": ["A", "B"], "distances": [{"between": ["A", "B"], "value": 10, "unit": "cm"}]}, {"type": "Midpoint", "point": "M", "between": ["A", "B"]}], "charges": [{"id": "q1", "charge": {"value": 2e-07, "unit": "C"}, "at": "A"}, {"id": "q2", "charge": {"value": -4e-07, "unit": "C"}, "at": "B"}], "queries": [{"type": "electric_field", "target": "M", "output": "magnitude", "unit": "N/C"}]}}
++{"id": "elec_field_perpendicular_bisector", "domain": "electrostatics", "tags": ["electric_field", "perpendicular_bisector"], "problem": "Two point charges q1 = 0.5 nC and q2 = -0.5 nC are placed at A and B, separated by 6 cm. Find the electric field at M on the perpendicular bisector of AB, 4 cm from the midpoint of AB.", "schema": {"domain": "electrostatics", "points": [{"id": "A"}, {"id": "B"}, {"id": "M"}], "geometry": [{"type": "PairwiseDistances", "points": ["A", "B"], "distances": [{"between": ["A", "B"], "value": 6, "unit": "cm"}]}, {"type": "PerpendicularBisectorPoint", "point": "M", "between": ["A", "B"], "distance_from_segment": {"value": 4, "unit": "cm"}, "orientation": "above"}], "charges": [{"id": "q1", "charge": {"value": 0.5, "unit": "nC"}, "at": "A"}, {"id": "q2", "charge": {"value": -0.5, "unit": "nC"}, "at": "B"}], "queries": [{"type": "electric_field", "target": "M", "output": "magnitude", "unit": "V/m"}]}}
++{"id": "elec_field_at_charge_position", "domain": "electrostatics", "tags": ["electric_field", "equilateral", "target_charge_position"], "problem": "Three charges q1 = q2 = q3 = 2.6 × 10^-6 C are placed at the vertices of an equilateral triangle with side length 10.3 cm. Calculate the net electric field strength at the position of q3.", "schema": {"domain": "electrostatics", "points": [{"id": "A"}, {"id": "B"}, {"id": "C"}], "geometry": [{"type": "EquilateralTriangle", "points": ["A", "B", "C"], "side": {"value": 10.3, "unit": "cm"}, "orientation": "above"}], "charges": [{"id": "q1", "charge": {"value": 2.6e-06, "unit": "C"}, "at": "A"}, {"id": "q2", "charge": {"value": 2.6e-06, "unit": "C"}, "at": "B"}, {"id": "q3", "charge": {"value": 2.6e-06, "unit": "C"}, "at": "C"}], "queries": [{"type": "electric_field", "target": "q3", "output": "magnitude", "unit": "V/m"}]}}
++{"id": "elec_right_triangle_foot_altitude", "domain": "electrostatics", "tags": ["net_force", "pairwise_distances", "right_triangle", "foot_of_altitude"], "problem": "At the vertices of right-angled triangle ABC (right-angled at A), with AB = 30 cm, AC = 40 cm, and BC = 50 cm, charges are placed. Find the net force acting on a charge q placed at H, the foot of the altitude from A to BC.", "schema": {"domain": "electrostatics", "points": [{"id": "A"}, {"id": "B"}, {"id": "C"}, {"id": "H"}], "geometry": [{"type": "PairwiseDistances", "points": ["A", "B", "C"], "distances": [{"between": ["A", "B"], "value": 30, "unit": "cm"}, {"between": ["A", "C"], "value": 40, "unit": "cm"}, {"between": ["B", "C"], "value": 50, "unit": "cm"}], "orientation": "above"}, {"type": "FootOfPerpendicular", "point": "H", "from": "A", "to_line": ["B", "C"]}], "charges": [{"id": "q1", "charge": {"value": 1e-09, "unit": "C"}, "at": "A"}, {"id": "q2", "charge": {"value": 1e-09, "unit": "C"}, "at": "B"}, {"id": "q3", "charge": {"value": 1e-09, "unit": "C"}, "at": "C"}, {"id": "q", "charge": {"value": 1e-09, "unit": "C"}, "at": "H"}], "queries": [{"type": "net_force", "target": "q", "output": "magnitude", "unit": "N"}]}}
++{"id": "elec_field_perpendicular_source_rays", "domain": "electrostatics", "tags": ["electric_field", "perpendicular_fields", "perpendicular_rays"], "problem": "Two charges q1 = 1.68 × 10^-6 C and q2 = 4.59 × 10^-6 C are each located 2.80 cm from point M. The electric fields they produce at M are perpendicular. Calculate the magnitude of the resultant electric field at M.", "schema": {"domain": "electrostatics", "points": [{"id": "M"}, {"id": "A"}, {"id": "B"}], "geometry": [{"type": "PerpendicularRaysFromPoint", "center": "M", "points": ["A", "B"], "distances": [{"value": 2.8, "unit": "cm"}, {"value": 2.8, "unit": "cm"}]}], "charges": [{"id": "q1", "charge": {"value": 1.68e-06, "unit": "C"}, "at": "A"}, {"id": "q2", "charge": {"value": 4.59e-06, "unit": "C"}, "at": "B"}], "queries": [{"type": "electric_field", "target": "M", "output": "magnitude", "unit": "V/m"}]}}
+diff --git a/src/xai_physics/domains/electrostatics/retrieval/hard_rules.py b/src/xai_physics/domains/electrostatics/retrieval/hard_rules.py
+new file mode 100644
+index 0000000..d101741
+--- /dev/null
++++ b/src/xai_physics/domains/electrostatics/retrieval/hard_rules.py
+@@ -0,0 +1,43 @@
++from __future__ import annotations
++
++import re
++
++from xai_physics.domains.electrostatics.retrieval.types import TagHit
++
++
++HARD_RULES: list[tuple[str, str, str]] = [
++    ("resultant_vector", r"\b(resultant force|resultant vector|two electric forces|forces have magnitudes|same direction|opposite directions)\b", "Problem gives force vectors directly."),
++    ("electric_field", r"\b(electric field|field strength|N/C|V/m)\b", "Problem asks for electric field."),
++    ("net_force", r"\b(net force|force acting|electric force acting|force exerted|resultant force acting)\b", "Problem asks for net Coulomb force."),
++    ("pairwise_distances", r"\b(AB|AC|BC|CA|CB|MA|MB)\s*=|\bseparated by\b.{0,80}\b(point C|AC|BC|CA|CB)\b", "Problem gives pairwise distances."),
++    ("equilateral", r"\bequilateral\b", "Equilateral triangle geometry."),
++    ("isosceles_right", r"\bisosceles right\b|\bright[- ]?angle vertex\b|\bright[- ]?angled triangle\b", "Right/isosceles-right triangle geometry."),
++    ("midpoint", r"\bmidpoint\b|\bmiddle point\b|\bplaced at H\b", "Point is a midpoint."),
++    ("perpendicular_bisector", r"\bperpendicular bisector\b", "Point lies on perpendicular bisector."),
++    ("center", r"\bcenter\b|\bcentroid\b", "Problem mentions center of triangle."),
++    ("collinear", r"\bcollinear\b|\bstraight line\b|\balong the line\b|\bon a line\b|\bbetween\b", "Collinear geometry."),
++    ("dielectric_medium", r"\b(dielectric constant|relative permittivity|epsilon|ε)\s*=", "Medium relative permittivity is given."),
++    ("perpendicular_fields", r"\bfields?\b.{0,80}\bperpendicular\b|\bperpendicular\b.{0,80}\bfields?\b", "Field vectors are perpendicular."),
++    ("foot_of_altitude", r"\bfoot of (the )?(altitude|perpendicular)\b", "Foot of perpendicular/altitude is given."),
++]
++
++
++def apply_hard_rules(problem: str) -> list[TagHit]:
++    text = problem.lower()
++    hits: list[TagHit] = []
++
++    def add(tag: str, evidence: str, score: float = 1.0) -> None:
++        if tag not in {hit.tag for hit in hits}:
++            hits.append(TagHit(tag=tag, source="hard_rule", score=score, evidence=evidence))
++
++    for tag, pattern, evidence in HARD_RULES:
++        if re.search(pattern, text, flags=re.IGNORECASE):
++            add(tag, evidence)
++
++    if "midpoint" in {h.tag for h in hits} and "electric_field" in {h.tag for h in hits}:
++        add("field_at_midpoint", "Electric field at midpoint pattern.", score=1.2)
++
++    if "perpendicular_bisector" in {h.tag for h in hits} and "electric_field" in {h.tag for h in hits}:
++        add("field_on_perpendicular_bisector", "Electric field on perpendicular bisector pattern.", score=1.2)
++
++    return hits
+diff --git a/src/xai_physics/domains/electrostatics/retrieval/pipeline.py b/src/xai_physics/domains/electrostatics/retrieval/pipeline.py
+new file mode 100644
+index 0000000..f5255ec
+--- /dev/null
++++ b/src/xai_physics/domains/electrostatics/retrieval/pipeline.py
+@@ -0,0 +1,45 @@
++from __future__ import annotations
++
++from xai_physics.domains.electrostatics.retrieval.example_store import load_examples
++from xai_physics.domains.electrostatics.retrieval.hard_rules import apply_hard_rules
++from xai_physics.domains.electrostatics.retrieval.reranker import rerank_examples
++from xai_physics.domains.electrostatics.retrieval.types import ElectrostaticsRetrievalResult
++from xai_physics.domains.electrostatics.retrieval.vector_store import VectorExampleIndex
++
++
++def retrieve_electrostatics_context(
++    problem: str,
++    vector_top_k: int = 8,
++    final_top_k: int = 4,
++) -> ElectrostaticsRetrievalResult:
++    examples = load_examples()
++    hard_tags = apply_hard_rules(problem)
++    index = VectorExampleIndex(examples)
++    vector_results = index.search(problem, top_k=vector_top_k)
++    selected = rerank_examples(vector_results, hard_tags=hard_tags, top_k=final_top_k)
++
++    final_tags: list[str] = []
++    for hit in hard_tags:
++        if hit.tag not in final_tags:
++            final_tags.append(hit.tag)
++    for item in selected:
++        for tag in item.example.tags:
++            if tag not in final_tags:
++                final_tags.append(tag)
++
++    return ElectrostaticsRetrievalResult(
++        domain="electrostatics",
++        hard_tags=hard_tags,
++        final_tags=final_tags,
++        selected_examples=selected,
++        debug={
++            "vector_top_k": vector_top_k,
++            "final_top_k": final_top_k,
++            "tag_hits": [hit.__dict__ for hit in hard_tags],
++            "vector_candidates": [
++                {"id": ex.id, "score": score, "tags": ex.tags}
++                for ex, score in vector_results
++            ],
++            "selected_example_ids": [item.example.id for item in selected],
++        },
++    )
+diff --git a/src/xai_physics/domains/electrostatics/retrieval/reranker.py b/src/xai_physics/domains/electrostatics/retrieval/reranker.py
+new file mode 100644
+index 0000000..28b287b
+--- /dev/null
++++ b/src/xai_physics/domains/electrostatics/retrieval/reranker.py
+@@ -0,0 +1,42 @@
++from __future__ import annotations
++
++from xai_physics.domains.electrostatics.retrieval.types import RetrievedExample, SchemaExample, TagHit
++
++
++IMPORTANT_TAGS = {
++    "resultant_vector",
++    "electric_field",
++    "pairwise_distances",
++    "perpendicular_bisector",
++    "midpoint",
++    "isosceles_right",
++    "foot_of_altitude",
++    "perpendicular_fields",
++}
++
++
++def rerank_examples(
++    vector_results: list[tuple[SchemaExample, float]],
++    hard_tags: list[TagHit],
++    top_k: int = 4,
++) -> list[RetrievedExample]:
++    hard_tag_set = {hit.tag for hit in hard_tags}
++    ranked: list[RetrievedExample] = []
++
++    for ex, vector_score in vector_results:
++        matched = sorted(set(ex.tags) & hard_tag_set)
++        rule_score = 2.0 * len(matched)
++        rule_score += sum(2.0 for tag in matched if tag in IMPORTANT_TAGS)
++        final = vector_score + rule_score
++        ranked.append(
++            RetrievedExample(
++                example=ex,
++                vector_score=vector_score,
++                rule_score=rule_score,
++                rerank_score=final,
++                matched_tags=matched,
++            )
++        )
++
++    ranked.sort(key=lambda item: item.rerank_score, reverse=True)
++    return ranked[:top_k]
+diff --git a/src/xai_physics/domains/electrostatics/retrieval/types.py b/src/xai_physics/domains/electrostatics/retrieval/types.py
+new file mode 100644
+index 0000000..21f4d4f
+--- /dev/null
++++ b/src/xai_physics/domains/electrostatics/retrieval/types.py
+@@ -0,0 +1,42 @@
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++from typing import Any
++
++
++@dataclass(frozen=True)
++class TagHit:
++    tag: str
++    source: str
++    score: float
++    evidence: str
++
++
++@dataclass(frozen=True)
++class SchemaExample:
++    id: str
++    domain: str
++    tags: list[str]
++    problem: str
++    schema: dict[str, Any]
++
++    def searchable_text(self) -> str:
++        return " ".join([self.id, self.problem, " ".join(self.tags)])
++
++
++@dataclass(frozen=True)
++class RetrievedExample:
++    example: SchemaExample
++    vector_score: float
++    rule_score: float
++    rerank_score: float
++    matched_tags: list[str] = field(default_factory=list)
++
++
++@dataclass(frozen=True)
++class ElectrostaticsRetrievalResult:
++    domain: str
++    hard_tags: list[TagHit]
++    final_tags: list[str]
++    selected_examples: list[RetrievedExample]
++    debug: dict[str, Any] = field(default_factory=dict)
+diff --git a/src/xai_physics/domains/electrostatics/retrieval/vector_store.py b/src/xai_physics/domains/electrostatics/retrieval/vector_store.py
+new file mode 100644
+index 0000000..81191c4
+--- /dev/null
++++ b/src/xai_physics/domains/electrostatics/retrieval/vector_store.py
+@@ -0,0 +1,43 @@
++from __future__ import annotations
++
++import math
++import re
++from collections import Counter
++from typing import Protocol
++
++from xai_physics.domains.electrostatics.retrieval.types import SchemaExample
++
++
++class EmbeddingModel(Protocol):
++    def embed(self, text: str) -> dict[str, float]:
++        ...
++
++
++class TokenEmbeddingModel:
++    def embed(self, text: str) -> dict[str, float]:
++        tokens = re.findall(r"[a-zA-Z_][a-zA-Z0-9_]+", text.lower())
++        counts = Counter(tok for tok in tokens if len(tok) >= 2)
++        norm = math.sqrt(sum(v * v for v in counts.values())) or 1.0
++        return {tok: val / norm for tok, val in counts.items()}
++
++
++def cosine_sparse(a: dict[str, float], b: dict[str, float]) -> float:
++    if len(a) > len(b):
++        a, b = b, a
++    return sum(val * b.get(key, 0.0) for key, val in a.items())
++
++
++class VectorExampleIndex:
++    def __init__(self, examples: list[SchemaExample], embedding_model: EmbeddingModel | None = None):
++        self.examples = examples
++        self.embedding_model = embedding_model or TokenEmbeddingModel()
++        self.example_vectors = {
++            ex.id: self.embedding_model.embed(ex.problem + " " + " ".join(ex.tags))
++            for ex in examples
++        }
++
++    def search(self, query: str, top_k: int = 5) -> list[tuple[SchemaExample, float]]:
++        qvec = self.embedding_model.embed(query)
++        scored = [(ex, cosine_sparse(qvec, self.example_vectors[ex.id])) for ex in self.examples]
++        scored.sort(key=lambda item: item[1], reverse=True)
++        return scored[:top_k]
+diff --git a/src/xai_physics/llm/domain_classifier.py b/src/xai_physics/llm/domain_classifier.py
+index 251df87..5af6dea 100644
+--- a/src/xai_physics/llm/domain_classifier.py
++++ b/src/xai_physics/llm/domain_classifier.py
+@@ -1,207 +1,213 @@
+-from __future__ import annotations
+-
+-from dataclasses import dataclass
+-
+-
+-SUPPORTED_DOMAINS = {
+-    "capacitor_state",
+-    "electrostatics",
+-    "equations",
+-}
+-
+-
+-@dataclass
+-class DomainDecision:
+-    domain: str
+-    confidence: float
+-    tags: list[str]
+-    reason: str
+-
+-
+-CAPACITOR_BASE_KEYWORDS = {
+-    "capacitor": "capacitor",
+-    "capacitance": "capacitance",
+-}
+-
+-
+-CAPACITOR_STATE_KEYWORDS = {
+-    "initially": "state_transition",
+-    "then": "state_transition",
+-    "after": "state_transition",
+-    "afterwards": "state_transition",
+-    "finally": "state_transition",
+-    "disconnected": "disconnect",
+-    "disconnect": "disconnect",
+-    "removed from the battery": "disconnect",
+-    "battery is removed": "disconnect",
+-    "isolated": "disconnect",
+-    "connected to source": "source",
+-    "connected to battery": "source",
+-    "insert dielectric": "dielectric_event",
+-    "dielectric is inserted": "dielectric_event",
+-    "inserted between": "dielectric_event",
+-    "dielectric is removed": "dielectric_event",
+-    "replace dielectric": "replace_dielectric",
+-    "replaced by dielectric": "replace_dielectric",
+-    "replaced by another dielectric": "replace_dielectric",
+-    "replaced": "replace_dielectric",
+-    "plate separation is doubled": "distance_scale",
+-    "distance is doubled": "distance_scale",
+-    "separation is doubled": "distance_scale",
+-    "area is doubled": "area_scale",
+-    "short-circuited": "short_circuit",
+-    "short circuit": "short_circuit",
+-    "connected to an inductor": "lc_event",
+-    "uncharged capacitor": "charge_redistribution",
+-    "connected in parallel": "charge_redistribution",
+-    "charge redistribution": "charge_redistribution",
+-}
+-
+-
+-ELECTROSTATICS_KEYWORDS = {
+-    "electrostatic force": "force",
+-    "electric force": "force",
+-    "coulomb": "coulomb",
+-    "net force": "net_force",
+-    "force acting": "net_force",
+-    "point charge": "point_charge",
+-    "charges are placed": "geometry",
+-    "placed at points": "geometry",
+-    "vertices": "geometry",
+-    "triangle": "geometry",
+-    "equilateral": "equilateral_triangle",
+-    "collinear": "collinear",
+-    "straight line": "collinear",
+-    "coordinate": "coordinate",
+-    "coordinates": "coordinate",
+-}
+-
+-
+-EQUATIONS_KEYWORDS = {
+-    "capacitor": "capacitor",
+-    "capacitance": "capacitance",
+-    "voltage": "voltage",
+-    "charge": "charge",
+-    "energy": "energy",
+-    "inductor": "inductor",
+-    "inductance": "inductance",
+-    "current": "current",
+-    "resistance": "resistance",
+-    "impedance": "impedance",
+-    "rlc": "rlc",
+-    "resonance": "resonance",
+-    "resonant": "resonance",
+-    "frequency": "frequency",
+-    "solenoid": "solenoid",
+-    "magnetic field": "magnetic_field",
+-    "magnetic flux": "magnetic_flux",
+-    "quality factor": "quality_factor",
+-    "power": "power",
+-    "ohm": "ohm",
+-    "electric field": "electric_field",
+-    "relative error": "measurement_error",
+-    "absolute error": "measurement_error",
+-}
+-
+-
+-def _score_keywords(text: str, keyword_map: dict[str, str]) -> tuple[int, list[str]]:
+-    score = 0
+-    tags: list[str] = []
+-
+-    for keyword, tag in keyword_map.items():
+-        if keyword in text:
+-            score += 1
+-            if tag not in tags:
+-                tags.append(tag)
+-
+-    return score, tags
+-
+-
+-def _add_unique(tags: list[str], tag: str) -> None:
+-    if tag not in tags:
+-        tags.append(tag)
+-
+-
+-def classify_domain(problem: str) -> DomainDecision:
+-    text = problem.lower()
+-
+-    cap_base_score, cap_base_tags = _score_keywords(text, CAPACITOR_BASE_KEYWORDS)
+-    state_score, state_tags = _score_keywords(text, CAPACITOR_STATE_KEYWORDS)
+-    elec_score, elec_tags = _score_keywords(text, ELECTROSTATICS_KEYWORDS)
+-    eq_score, eq_tags = _score_keywords(text, EQUATIONS_KEYWORDS)
+-
+-    has_capacitor = "capacitor" in text or "capacitance" in text
+-    has_dielectric_replace = (
+-        has_capacitor
+-        and "dielectric" in text
+-        and ("replace" in text or "replaced" in text)
+-    )
+-
+-    if has_capacitor:
+-        _add_unique(state_tags, "capacitor")
+-
+-    # Strong electrostatics boost only when charges have spatial arrangement.
+-    if any(k in text for k in ["placed", "vertices", "triangle", "collinear", "at point", "coordinates"]):
+-        if any(k in text for k in ["charge", "charges", "electric force", "electrostatic force", "net force"]):
+-            elec_score += 3
+-
+-    # Capacitor state requires a real event/state transition.
+-    # Plain capacitor formulas stay equations.
+-    if has_capacitor and (state_score > 0 or has_dielectric_replace):
+-        state_score += 3 + cap_base_score
+-        if has_dielectric_replace:
+-            _add_unique(state_tags, "replace_dielectric")
+-        return DomainDecision(
+-            domain="capacitor_state",
+-            confidence=state_score / max(state_score + elec_score + eq_score, 1),
+-            tags=state_tags,
+-            reason=(
+-                f"capacitor_state score={state_score}, "
+-                f"electrostatics score={elec_score}, "
+-                f"equations score={eq_score}"
+-            ),
+-        )
+-
+-    # Plain scalar formulas should prefer equations.
+-    if eq_score > 0 and elec_score == 0:
+-        return DomainDecision(
+-            domain="equations",
+-            confidence=1.0,
+-            tags=eq_tags,
+-            reason=f"equations score={eq_score}, no state/electrostatic geometry trigger",
+-        )
+-
+-    scores = {
+-        "electrostatics": elec_score,
+-        "equations": eq_score,
+-    }
+-
+-    best_domain = max(scores, key=scores.get)
+-    best_score = scores[best_domain]
+-
+-    if best_score == 0:
+-        return DomainDecision(
+-            domain="unknown",
+-            confidence=0.0,
+-            tags=[],
+-            reason="No supported domain keywords found.",
+-        )
+-
+-    total = sum(scores.values())
+-    confidence = best_score / total if total else 0.0
+-
+-    tags_by_domain = {
+-        "electrostatics": elec_tags,
+-        "equations": eq_tags,
+-    }
+-
+-    return DomainDecision(
+-        domain=best_domain,
+-        confidence=confidence,
+-        tags=tags_by_domain[best_domain],
+-        reason=(
+-            f"capacitor_state score={state_score}, "
+-            f"electrostatics score={elec_score}, "
+-            f"equations score={eq_score}"
+-        ),
+-    )
++from __future__ import annotations
++
++from dataclasses import dataclass
++
++
++SUPPORTED_DOMAINS = {
++    "capacitor_state",
++    "electrostatics",
++    "equations",
++}
++
++
++@dataclass
++class DomainDecision:
++    domain: str
++    confidence: float
++    tags: list[str]
++    reason: str
++
++
++CAPACITOR_BASE_KEYWORDS = {
++    "capacitor": "capacitor",
++    "capacitance": "capacitance",
++}
++
++
++CAPACITOR_STATE_KEYWORDS = {
++    "initially": "state_transition",
++    "then": "state_transition",
++    "after": "state_transition",
++    "afterwards": "state_transition",
++    "finally": "state_transition",
++    "disconnected": "disconnect",
++    "disconnect": "disconnect",
++    "removed from the battery": "disconnect",
++    "battery is removed": "disconnect",
++    "isolated": "disconnect",
++    "connected to source": "source",
++    "connected to battery": "source",
++    "insert dielectric": "dielectric_event",
++    "dielectric is inserted": "dielectric_event",
++    "inserted between": "dielectric_event",
++    "dielectric is removed": "dielectric_event",
++    "replace dielectric": "replace_dielectric",
++    "replaced by dielectric": "replace_dielectric",
++    "replaced by another dielectric": "replace_dielectric",
++    "replaced": "replace_dielectric",
++    "plate separation is doubled": "distance_scale",
++    "distance is doubled": "distance_scale",
++    "separation is doubled": "distance_scale",
++    "area is doubled": "area_scale",
++    "short-circuited": "short_circuit",
++    "short circuit": "short_circuit",
++    "connected to an inductor": "lc_event",
++    "uncharged capacitor": "charge_redistribution",
++    "connected in parallel": "charge_redistribution",
++    "charge redistribution": "charge_redistribution",
++}
++
++
++ELECTROSTATICS_KEYWORDS = {
++    "electrostatic force": "force",
++    "electric force": "force",
++    "electric forces": "resultant_vector",
++    "resultant force": "resultant_vector",
++    "coulomb": "coulomb",
++    "net force": "net_force",
++    "force acting": "net_force",
++    "point charge": "point_charge",
++    "charges are placed": "geometry",
++    "placed at points": "geometry",
++    "vertices": "geometry",
++    "triangle": "geometry",
++    "equilateral": "equilateral_triangle",
++    "collinear": "collinear",
++    "straight line": "collinear",
++    "coordinate": "coordinate",
++    "coordinates": "coordinate",
++}
++
++
++EQUATIONS_KEYWORDS = {
++    "capacitor": "capacitor",
++    "capacitance": "capacitance",
++    "voltage": "voltage",
++    "charge": "charge",
++    "energy": "energy",
++    "inductor": "inductor",
++    "inductance": "inductance",
++    "current": "current",
++    "resistance": "resistance",
++    "impedance": "impedance",
++    "rlc": "rlc",
++    "resonance": "resonance",
++    "resonant": "resonance",
++    "frequency": "frequency",
++    "solenoid": "solenoid",
++    "magnetic field": "magnetic_field",
++    "magnetic flux": "magnetic_flux",
++    "quality factor": "quality_factor",
++    "power": "power",
++    "ohm": "ohm",
++    "electric field": "electric_field",
++    "relative error": "measurement_error",
++    "absolute error": "measurement_error",
++}
++
++
++def _score_keywords(text: str, keyword_map: dict[str, str]) -> tuple[int, list[str]]:
++    score = 0
++    tags: list[str] = []
++
++    for keyword, tag in keyword_map.items():
++        if keyword in text:
++            score += 1
++            if tag not in tags:
++                tags.append(tag)
++
++    return score, tags
++
++
++def _add_unique(tags: list[str], tag: str) -> None:
++    if tag not in tags:
++        tags.append(tag)
++
++
++def classify_domain(problem: str) -> DomainDecision:
++    text = problem.lower()
++
++    cap_base_score, cap_base_tags = _score_keywords(text, CAPACITOR_BASE_KEYWORDS)
++    state_score, state_tags = _score_keywords(text, CAPACITOR_STATE_KEYWORDS)
++    elec_score, elec_tags = _score_keywords(text, ELECTROSTATICS_KEYWORDS)
++    eq_score, eq_tags = _score_keywords(text, EQUATIONS_KEYWORDS)
++
++    has_capacitor = "capacitor" in text or "capacitance" in text
++    has_dielectric_replace = (
++        has_capacitor
++        and "dielectric" in text
++        and ("replace" in text or "replaced" in text)
++    )
++
++    if has_capacitor:
++        _add_unique(state_tags, "capacitor")
++
++    # Strong electrostatics boost only when charges/fields have spatial arrangement.
++    if any(k in text for k in ["placed", "vertices", "triangle", "collinear", "at point", "coordinates", "midpoint", "perpendicular bisector"]):
++        if any(k in text for k in ["charge", "charges", "electric force", "electrostatic force", "net force", "electric field", "field strength"]):
++            elec_score += 3
++
++    # Direct vector-resultant exercises are electrostatics vector problems, not scalar equations.
++    if "electric forces" in text and any(k in text for k in ["magnitude", "magnitudes", "same direction", "opposite", "angle"]):
++        elec_score += 3
++
++    # Capacitor state requires a real event/state transition.
++    # Plain capacitor formulas stay equations.
++    if has_capacitor and (state_score > 0 or has_dielectric_replace):
++        state_score += 3 + cap_base_score
++        if has_dielectric_replace:
++            _add_unique(state_tags, "replace_dielectric")
++        return DomainDecision(
++            domain="capacitor_state",
++            confidence=state_score / max(state_score + elec_score + eq_score, 1),
++            tags=state_tags,
++            reason=(
++                f"capacitor_state score={state_score}, "
++                f"electrostatics score={elec_score}, "
++                f"equations score={eq_score}"
++            ),
++        )
++
++    # Plain scalar formulas should prefer equations.
++    if eq_score > 0 and elec_score == 0:
++        return DomainDecision(
++            domain="equations",
++            confidence=1.0,
++            tags=eq_tags,
++            reason=f"equations score={eq_score}, no state/electrostatic geometry trigger",
++        )
++
++    scores = {
++        "electrostatics": elec_score,
++        "equations": eq_score,
++    }
++
++    best_domain = max(scores, key=scores.get)
++    best_score = scores[best_domain]
++
++    if best_score == 0:
++        return DomainDecision(
++            domain="unknown",
++            confidence=0.0,
++            tags=[],
++            reason="No supported domain keywords found.",
++        )
++
++    total = sum(scores.values())
++    confidence = best_score / total if total else 0.0
++
++    tags_by_domain = {
++        "electrostatics": elec_tags,
++        "equations": eq_tags,
++    }
++
++    return DomainDecision(
++        domain=best_domain,
++        confidence=confidence,
++        tags=tags_by_domain[best_domain],
++        reason=(
++            f"capacitor_state score={state_score}, "
++            f"electrostatics score={elec_score}, "
++            f"equations score={eq_score}"
++        ),
++    )
+diff --git a/src/xai_physics/llm/domain_prompts.py b/src/xai_physics/llm/domain_prompts.py
+index de48971..30166a7 100644
+--- a/src/xai_physics/llm/domain_prompts.py
++++ b/src/xai_physics/llm/domain_prompts.py
+@@ -1,442 +1,570 @@
+-from __future__ import annotations
+-
+-
+-CAPACITOR_STATE_PROMPT = r"""
+-You are a schema extraction engine for capacitor state-transition physics problems.
+-
+-Return ONE valid JSON object only.
+-Do not solve the problem.
+-Do not include markdown.
+-Do not include explanations.
+-
+-Domain:
+-capacitor_state
+-
+-Use this domain for problems involving:
+-- capacitor initially charged by a source
+-- capacitor connected to or disconnected from a source
+-- dielectric insertion or permittivity change
+-- plate distance change
+-- plate area change
+-- isolated capacitors connected together
+-- charge redistribution between capacitors
+-- capacitor energy, charge, voltage, capacitance queries
+-
+-============================================================
+-CANONICAL SCHEMA SHAPE
+-============================================================
+-
+-Return a JSON object with this structure:
+-
+-{
+-  "domain": "capacitor_state",
+-  "entities": [
+-    {
+-      "id": "<capacitor_id>",
+-      "type": "capacitor",
+-
+-      "capacitance": {"value": <number>, "unit": "<unit>"},
+-      "voltage": {"value": <number>, "unit": "<unit>"},
+-      "charge": {"value": <number>, "unit": "<unit>"},
+-
+-      "connected_to_source": <true_or_false>
+-    }
+-  ],
+-  "events": [
+-    {
+-      "type": "<event_type>",
+-      "apply_to": ["<capacitor_id>"],
+-      "params": {}
+-    }
+-  ],
+-  "queries": [
+-    {
+-      "type": "<query_type>",
+-      "target": "<capacitor_id_or_system>",
+-      "unit": "<desired_output_unit>"
+-    }
+-  ]
+-}
+-
+-Important:
+-- The fields "capacitance", "voltage", and "charge" are optional.
+-- Include only quantities explicitly given or clearly implied by the problem.
+-- Do not invent missing quantities.
+-- Do not compute derived quantities.
+-- If capacitance and voltage are given, do not also invent charge.
+-- If charge and capacitance are given, do not also invent voltage.
+-- If charge and voltage are given, do not also invent capacitance.
+-- Use the original numerical values from the problem.
+-- Use units exactly when possible, normalized if needed.
+-
+-============================================================
+-ENTITIES
+-============================================================
+-
+-Each capacitor should be represented as:
+-
+-{
+-  "id": "C1",
+-  "type": "capacitor",
+-  "capacitance": {"value": <number>, "unit": "<F|uF|μF|nF|pF>"},
+-  "voltage": {"value": <number>, "unit": "<V|mV|kV>"},
+-  "charge": {"value": <number>, "unit": "<C|mC|uC|μC|nC|pC>"},
+-  "connected_to_source": <true_or_false>
+-}
+-
+-Rules:
+-- Use C1, C2, C3... for capacitors unless the problem gives names.
+-- For an uncharged capacitor, set voltage to 0 if capacitance is known.
+-- If the capacitor is still connected to a battery/source, set connected_to_source = true.
+-- If the capacitor is disconnected, isolated, removed from source, or cut from source, set connected_to_source = false.
+-- If the problem says the capacitor is charged by a source and then something happens, represent the initial state before events.
+-
+-============================================================
+-EVENTS
+-============================================================
+-
+-Allowed event types:
+-
+-1. DisconnectFromSource
+-
+-Use when the capacitor is disconnected, isolated, removed, or cut from the source.
+-
+-{
+-  "type": "DisconnectFromSource",
+-  "apply_to": ["C1"]
+-}
+-
+-2. ConnectToSource
+-
+-Use when a capacitor is connected to a source with known voltage.
+-
+-{
+-  "type": "ConnectToSource",
+-  "apply_to": ["C1"],
+-  "params": {
+-    "voltage": {"value": <number>, "unit": "<unit>"}
+-  }
+-}
+-
+-3. InsertDielectric
+-
+-Use when a dielectric is inserted or permittivity changes by a factor.
+-
+-{
+-  "type": "InsertDielectric",
+-  "apply_to": ["C1"],
+-  "params": {
+-    "dielectric_constant": <number>
+-  }
+-}
+-
+-4. DistanceScale
+-
+-Use when plate separation changes by a multiplicative factor.
+-
+-Examples:
+-- distance doubled -> factor = 2
+-- distance tripled -> factor = 3
+-- distance halved -> factor = 0.5
+-- distance changes from d1 to d2 -> factor = d2 / d1
+-
+-{
+-  "type": "DistanceScale",
+-  "apply_to": ["C1"],
+-  "params": {
+-    "factor": <number>
+-  }
+-}
+-
+-5. AreaScale
+-
+-Use when plate area changes by a multiplicative factor.
+-
+-{
+-  "type": "AreaScale",
+-  "apply_to": ["C1"],
+-  "params": {
+-    "factor": <number>
+-  }
+-}
+-
+-6. ParallelRedistribution
+-
+-Use when isolated capacitors are connected together so that charge redistributes.
+-
+-{
+-  "type": "ParallelRedistribution",
+-  "apply_to": ["C1", "C2"],
+-  "params": {
+-    "polarity": "same"
+-  }
+-}
+-
+-Rules:
+-- If the problem says like-poled, like-signed, same polarity, positive-to-positive, negative-to-negative, use polarity = "same".
+-- If the problem says opposite polarity, use polarity = "opposite" only if explicitly stated.
+-- Do not use ParallelRedistribution for series connection.
+-
+-7. ShortCircuit
+-
+-Use when the plates/terminals of a capacitor are short-circuited.
+-
+-{
+-  "type": "ShortCircuit",
+-  "apply_to": ["C1"]
+-}
+-
+-Rules:
+-- Use this for phrases such as "short-circuited", "short circuit", or "plates are connected by a wire".
+-- Do not compute final charge or energy in the schema.
+-
+-============================================================
+-QUERIES
+-============================================================
+-
+-Allowed query types:
+-- voltage
+-- charge
+-- capacitance
+-- energy
+-- energy_ratio
+-
+-Query target:
+-- Use a capacitor id such as "C1" for single-capacitor questions.
+-- Use "system" when asking final voltage, total charge, or total energy of a connected combination.
+-
+-Examples of query shape:
+-
+-{
+-  "type": "voltage",
+-  "target": "C1",
+-  "unit": "V"
+-}
+-
+-{
+-  "type": "energy",
+-  "target": "system",
+-  "unit": "μJ"
+-}
+-
+-============================================================
+-FINAL INSTRUCTIONS
+-============================================================
+-
+-
+-Energy ratio query:
+-
+-Use this query when the problem asks "how many times", "how will the energy change",
+-"what multiple of initial energy", or similar comparison questions.
+-
+-{
+-  "type": "energy_ratio",
+-  "target": "C1",
+-  "unit": "times"
+-}
+-
+-Rules:
+-- Use energy_ratio only when the question asks for a ratio/change factor, not an absolute energy value.
+-- For disconnected parallel-plate capacitors, charge remains constant.
+-- If plate distance is scaled while charge remains constant, represent that as a DistanceScale event.
+-
+-
+-ReplaceDielectric event:
+-
+-Use this when a dielectric material with one dielectric constant is replaced by another.
+-
+-{
+-  "type": "ReplaceDielectric",
+-  "apply_to": ["C1"],
+-  "params": {
+-    "initial_k": 4,
+-    "final_k": 2
+-  }
+-}
+-
+-Capacitance ratio query:
+-
+-Use this when the problem asks for the ratio of final capacitance to initial capacitance.
+-
+-{
+-  "type": "capacitance_ratio",
+-  "target": "C1",
+-  "unit": "times"
+-}
+-
+-
+-
+-Energy percent query:
+-
+-Use this when the problem asks what percentage of initial energy remains,
+-or asks for energy change expressed as a percentage.
+-
+-{
+-  "type": "energy_percent",
+-  "target": "C1",
+-  "unit": "%"
+-}
+-
+-Rules:
+-- Use energy_percent only for percentage questions.
+-- Use energy_ratio for "how many times" questions.
+-- For disconnected capacitors, charge remains constant.
+-
+-Return only the schema JSON.
+-Do not solve.
+-Do not include final answer.
+-Do not include reasoning.
+-Use retrieved examples to match the closest pattern.
+-"""
+-
+-
+-ELECTROSTATICS_PROMPT = r"""
+-You are a schema extraction engine for electrostatics Coulomb-force problems.
+-
+-Return ONE valid JSON object only.
+-Do not solve the problem.
+-Do not include markdown.
+-Do not include explanations.
+-
+-Domain:
+-electrostatics
+-
+-Use this domain for:
+-- point charges
+-- Coulomb force
+-- electric force
+-- net electrostatic force
+-- charges placed on a line, triangle, vertices, or coordinates
+-
+-Prefer geometry relations over invented coordinates.
+-
+-Return a JSON object with this general structure:
+-
+-{
+-  "domain": "electrostatics",
+-  "points": [
+-    {"id": "<point_id>"}
+-  ],
+-  "geometry": [
+-    {
+-      "type": "<geometry_type>",
+-      "points": ["<point_id>", "..."],
+-      "params": {}
+-    }
+-  ],
+-  "charges": [
+-    {
+-      "id": "<charge_id>",
+-      "charge": {"value": <number>, "unit": "<unit>"},
+-      "at": "<point_id>"
+-    }
+-  ],
+-  "queries": [
+-    {
+-      "type": "net_force",
+-      "target": "<charge_id>",
+-      "output": "<magnitude|x_component|y_component|components>",
+-      "unit": "N"
+-    }
+-  ]
+-}
+-
+-Allowed geometry:
+-- EquilateralTriangle
+-- Collinear
+-
+-EquilateralTriangle shape:
+-
+-{
+-  "type": "EquilateralTriangle",
+-  "points": ["A", "B", "C"],
+-  "side": {"value": <number>, "unit": "<unit>"},
+-  "orientation": "above"
+-}
+-
+-Collinear shape:
+-
+-{
+-  "type": "Collinear",
+-  "points": ["A", "B", "C"],
+-  "order": ["A", "B", "C"],
+-  "distances": [
+-    {"between": ["A", "B"], "value": <number>, "unit": "<unit>"}
+-  ]
+-}
+-
+-Important rules:
+-- Do not invent coordinates when the problem gives geometry.
+-- Use explicit x,y only if the problem explicitly gives coordinates.
+-- Use points A, B, C when the problem names positions.
+-- Map each charge to the point where it is placed.
+-- Do not compute final force.
+-- Return JSON only.
+-"""
+-
+-
+-EQUATIONS_PROMPT = r"""
+-You are a schema extraction engine for scalar physics equation problems.
+-
+-Return ONE valid JSON object only.
+-Do not solve the problem.
+-Do not include markdown.
+-Do not include explanations.
+-
+-Domain:
+-equations
+-
+-Use this domain for scalar formula/algebra problems.
+-
+-Do NOT use this domain for capacitor state-transition problems involving:
+-disconnecting, reconnecting to source, inserting dielectric after disconnecting,
+-changing plate distance after disconnecting, short circuit, or charge redistribution.
+-Those are capacitor_state.
+-
+-Do NOT use this domain for Coulomb net-force vector geometry problems with charges
+-placed at points, vertices, lines, triangles, or explicit coordinates.
+-Those are electrostatics.
+-
+-Canonical schema shape:
+-
+-{
+-  "domain": "equations",
+-  "objects": [
+-    {
+-      "id": "<object_id>",
+-      "type": "<quantity_type>",
+-      "role": "<given|query|constant|intermediate>",
+-      "value": <number_or_null>,
+-      "unit": "<unit>",
+-      "symbol": "<optional_symbol>"
+-    }
+-  ],
+-  "relations": [
+-    {
+-      "type": "formula",
+-      "name": "<formula_name_from_retrieved_formula_docs>",
+-      "objects": ["<object_id>", "..."]
+-    }
+-  ],
+-  "constraints": []
+-}
+-
+-Important:
+-- Use only formula names from Relevant formula docs.
+-- Use the retrieved schema_template as the closest structural guide.
+-- Do not invent formula names.
+-- Do not compute derived quantities in the schema.
+-- Use original numeric values from the problem.
+-- The query quantity must have role = "query" and value = null.
+-- Use ASCII micro-units when possible: uF, uC, uJ, uN.
+-- Return JSON only.
+-"""
+-
+-
+-DOMAIN_PROMPTS = {
+-    "capacitor_state": CAPACITOR_STATE_PROMPT,
+-    "electrostatics": ELECTROSTATICS_PROMPT,
+-    "equations": EQUATIONS_PROMPT,
+-}
+-
+-
++from __future__ import annotations
++
++
++CAPACITOR_STATE_PROMPT = r"""
++You are a schema extraction engine for capacitor state-transition physics problems.
++
++Return ONE valid JSON object only.
++Do not solve the problem.
++Do not include markdown.
++Do not include explanations.
++
++Domain:
++capacitor_state
++
++Use this domain for problems involving:
++- capacitor initially charged by a source
++- capacitor connected to or disconnected from a source
++- dielectric insertion or permittivity change
++- plate distance change
++- plate area change
++- isolated capacitors connected together
++- charge redistribution between capacitors
++- capacitor energy, charge, voltage, capacitance queries
++
++============================================================
++CANONICAL SCHEMA SHAPE
++============================================================
++
++Return a JSON object with this structure:
++
++{
++  "domain": "capacitor_state",
++  "entities": [
++    {
++      "id": "<capacitor_id>",
++      "type": "capacitor",
++
++      "capacitance": {"value": <number>, "unit": "<unit>"},
++      "voltage": {"value": <number>, "unit": "<unit>"},
++      "charge": {"value": <number>, "unit": "<unit>"},
++
++      "connected_to_source": <true_or_false>
++    }
++  ],
++  "events": [
++    {
++      "type": "<event_type>",
++      "apply_to": ["<capacitor_id>"],
++      "params": {}
++    }
++  ],
++  "queries": [
++    {
++      "type": "<query_type>",
++      "target": "<capacitor_id_or_system>",
++      "unit": "<desired_output_unit>"
++    }
++  ]
++}
++
++Important:
++- The fields "capacitance", "voltage", and "charge" are optional.
++- Include only quantities explicitly given or clearly implied by the problem.
++- Do not invent missing quantities.
++- Do not compute derived quantities.
++- If capacitance and voltage are given, do not also invent charge.
++- If charge and capacitance are given, do not also invent voltage.
++- If charge and voltage are given, do not also invent capacitance.
++- Use the original numerical values from the problem.
++- Use units exactly when possible, normalized if needed.
++
++============================================================
++ENTITIES
++============================================================
++
++Each capacitor should be represented as:
++
++{
++  "id": "C1",
++  "type": "capacitor",
++  "capacitance": {"value": <number>, "unit": "<F|uF|μF|nF|pF>"},
++  "voltage": {"value": <number>, "unit": "<V|mV|kV>"},
++  "charge": {"value": <number>, "unit": "<C|mC|uC|μC|nC|pC>"},
++  "connected_to_source": <true_or_false>
++}
++
++Rules:
++- Use C1, C2, C3... for capacitors unless the problem gives names.
++- For an uncharged capacitor, set voltage to 0 if capacitance is known.
++- If the capacitor is still connected to a battery/source, set connected_to_source = true.
++- If the capacitor is disconnected, isolated, removed from source, or cut from source, set connected_to_source = false.
++- If the problem says the capacitor is charged by a source and then something happens, represent the initial state before events.
++
++============================================================
++EVENTS
++============================================================
++
++Allowed event types:
++
++1. DisconnectFromSource
++
++Use when the capacitor is disconnected, isolated, removed, or cut from the source.
++
++{
++  "type": "DisconnectFromSource",
++  "apply_to": ["C1"]
++}
++
++2. ConnectToSource
++
++Use when a capacitor is connected to a source with known voltage.
++
++{
++  "type": "ConnectToSource",
++  "apply_to": ["C1"],
++  "params": {
++    "voltage": {"value": <number>, "unit": "<unit>"}
++  }
++}
++
++3. InsertDielectric
++
++Use when a dielectric is inserted or permittivity changes by a factor.
++
++{
++  "type": "InsertDielectric",
++  "apply_to": ["C1"],
++  "params": {
++    "dielectric_constant": <number>
++  }
++}
++
++4. DistanceScale
++
++Use when plate separation changes by a multiplicative factor.
++
++Examples:
++- distance doubled -> factor = 2
++- distance tripled -> factor = 3
++- distance halved -> factor = 0.5
++- distance changes from d1 to d2 -> factor = d2 / d1
++
++{
++  "type": "DistanceScale",
++  "apply_to": ["C1"],
++  "params": {
++    "factor": <number>
++  }
++}
++
++5. AreaScale
++
++Use when plate area changes by a multiplicative factor.
++
++{
++  "type": "AreaScale",
++  "apply_to": ["C1"],
++  "params": {
++    "factor": <number>
++  }
++}
++
++6. ParallelRedistribution
++
++Use when isolated capacitors are connected together so that charge redistributes.
++
++{
++  "type": "ParallelRedistribution",
++  "apply_to": ["C1", "C2"],
++  "params": {
++    "polarity": "same"
++  }
++}
++
++Rules:
++- If the problem says like-poled, like-signed, same polarity, positive-to-positive, negative-to-negative, use polarity = "same".
++- If the problem says opposite polarity, use polarity = "opposite" only if explicitly stated.
++- Do not use ParallelRedistribution for series connection.
++
++7. ShortCircuit
++
++Use when the plates/terminals of a capacitor are short-circuited.
++
++{
++  "type": "ShortCircuit",
++  "apply_to": ["C1"]
++}
++
++Rules:
++- Use this for phrases such as "short-circuited", "short circuit", or "plates are connected by a wire".
++- Do not compute final charge or energy in the schema.
++
++============================================================
++QUERIES
++============================================================
++
++Allowed query types:
++- voltage
++- charge
++- capacitance
++- energy
++- energy_ratio
++
++Query target:
++- Use a capacitor id such as "C1" for single-capacitor questions.
++- Use "system" when asking final voltage, total charge, or total energy of a connected combination.
++
++Examples of query shape:
++
++{
++  "type": "voltage",
++  "target": "C1",
++  "unit": "V"
++}
++
++{
++  "type": "energy",
++  "target": "system",
++  "unit": "μJ"
++}
++
++============================================================
++FINAL INSTRUCTIONS
++============================================================
++
++
++Energy ratio query:
++
++Use this query when the problem asks "how many times", "how will the energy change",
++"what multiple of initial energy", or similar comparison questions.
++
++{
++  "type": "energy_ratio",
++  "target": "C1",
++  "unit": "times"
++}
++
++Rules:
++- Use energy_ratio only when the question asks for a ratio/change factor, not an absolute energy value.
++- For disconnected parallel-plate capacitors, charge remains constant.
++- If plate distance is scaled while charge remains constant, represent that as a DistanceScale event.
++
++
++ReplaceDielectric event:
++
++Use this when a dielectric material with one dielectric constant is replaced by another.
++
++{
++  "type": "ReplaceDielectric",
++  "apply_to": ["C1"],
++  "params": {
++    "initial_k": 4,
++    "final_k": 2
++  }
++}
++
++Capacitance ratio query:
++
++Use this when the problem asks for the ratio of final capacitance to initial capacitance.
++
++{
++  "type": "capacitance_ratio",
++  "target": "C1",
++  "unit": "times"
++}
++
++
++
++Energy percent query:
++
++Use this when the problem asks what percentage of initial energy remains,
++or asks for energy change expressed as a percentage.
++
++{
++  "type": "energy_percent",
++  "target": "C1",
++  "unit": "%"
++}
++
++Rules:
++- Use energy_percent only for percentage questions.
++- Use energy_ratio for "how many times" questions.
++- For disconnected capacitors, charge remains constant.
++
++Return only the schema JSON.
++Do not solve.
++Do not include final answer.
++Do not include reasoning.
++Use retrieved examples to match the closest pattern.
++"""
++
++
++ELECTROSTATICS_PROMPT = r"""
++You are a schema extraction engine for electrostatics vector problems.
++
++Return ONE valid JSON object only.
++Do not solve the problem.
++Do not include markdown.
++Do not include explanations.
++
++Domain:
++electrostatics
++
++Use this domain for:
++- point charges arranged on points/lines/triangles/coordinates
++- Coulomb force / net electric force on a charge
++- electric field / field strength at a point or at the position of a charge
++- direct vector-resultant problems involving electric forces already given in N
++
++============================================================
++TOP-LEVEL SCHEMA SHAPES
++============================================================
++
++A) Point-charge schema:
++
++{
++  "domain": "electrostatics",
++  "medium": {"relative_permittivity": <optional_number>},
++  "points": [
++    {"id": "A"}
++  ],
++  "geometry": [],
++  "charges": [
++    {"id": "q1", "charge": {"value": <number>, "unit": "<unit>"}, "at": "A"}
++  ],
++  "queries": [
++    {
++      "type": "net_force|electric_field",
++      "target": "<charge_id_or_point_id>",
++      "output": "magnitude|x_component|y_component|components",
++      "unit": "N|V/m|N/C"
++    }
++  ]
++}
++
++B) Direct vector-resultant schema, for problems that already give forces in N:
++
++{
++  "domain": "electrostatics",
++  "vectors": [
++    {"id": "F1", "magnitude": {"value": 5, "unit": "N"}, "angle_deg": 0},
++    {"id": "F2", "magnitude": {"value": 12, "unit": "N"}, "angle_deg": 60}
++  ],
++  "queries": [
++    {"type": "resultant_vector", "target": "vectors", "output": "magnitude", "unit": "N"}
++  ]
++}
++
++Rules for direct force-vector problems:
++- same direction => angle_deg 0 for both vectors.
++- opposite directions => one vector angle_deg 0, the other angle_deg 180.
++- "angle between forces is θ" => F1 angle_deg 0, F2 angle_deg θ.
++- Do not invent point charges for these problems.
++
++============================================================
++GEOMETRY PRIMITIVES
++============================================================
++
++Prefer geometry primitives over invented coordinates.
++Use explicit x,y only if the problem explicitly gives coordinates.
++
++1) PairwiseDistances
++Use this whenever the problem gives distances like AB, AC, BC, CA, CB, MA, MB.
++This includes ordinary triangles and degenerate/collinear triples.
++Do NOT use Collinear unless the problem explicitly says collinear, straight line, between, or same line.
++
++{
++  "type": "PairwiseDistances",
++  "points": ["A", "B", "C"],
++  "distances": [
++    {"between": ["A", "B"], "value": 20, "unit": "cm"},
++    {"between": ["A", "C"], "value": 12, "unit": "cm"},
++    {"between": ["B", "C"], "value": 16, "unit": "cm"}
++  ],
++  "orientation": "above"
++}
++
++2) EquilateralTriangle
++
++{
++  "type": "EquilateralTriangle",
++  "points": ["A", "B", "C"],
++  "side": {"value": 10, "unit": "cm"},
++  "orientation": "above"
++}
++
++3) IsoscelesRightTriangle
++Use this when the problem says isosceles right triangle / right-angle vertex, with equal legs a.
++
++{
++  "type": "IsoscelesRightTriangle",
++  "points": ["A", "B", "C"],
++  "right_angle_at": "A",
++  "leg": {"value": 10, "unit": "cm"},
++  "orientation": "above"
++}
++
++4) Collinear
++Use only for explicitly collinear / straight-line / same-line problems.
++
++{
++  "type": "Collinear",
++  "points": ["A", "M", "B"],
++  "order": ["A", "M", "B"],
++  "distances": [
++    {"between": ["A", "M"], "value": 4, "unit": "cm"},
++    {"between": ["M", "B"], "value": 6, "unit": "cm"}
++  ]
++}
++
++5) Midpoint
++Use together with PairwiseDistances for midpoint of AB.
++
++{
++  "type": "Midpoint",
++  "point": "M",
++  "between": ["A", "B"]
++}
++
++6) PointOnLine
++Use when a point is on line AB and its distance from A/q1 is given.
++
++{
++  "type": "PointOnLine",
++  "point": "M",
++  "start": "A",
++  "end": "B",
++  "distance_from_start": {"value": 4, "unit": "cm"},
++  "direction": "toward_end"
++}
++
++7) PerpendicularBisectorPoint
++Use when M lies on perpendicular bisector of AB and is h cm away from AB / from the midpoint.
++
++{
++  "type": "PerpendicularBisectorPoint",
++  "point": "M",
++  "between": ["A", "B"],
++  "distance_from_segment": {"value": 3, "unit": "cm"},
++  "orientation": "above"
++}
++
++8) Centroid
++Use for center of an equilateral triangle after EquilateralTriangle.
++
++{
++  "type": "Centroid",
++  "point": "O",
++  "of": ["A", "B", "C"]
++}
++
++9) FootOfPerpendicular
++Use for foot of altitude/perpendicular, e.g. H is foot from A to BC.
++
++{
++  "type": "FootOfPerpendicular",
++  "point": "H",
++  "from": "A",
++  "to_line": ["B", "C"]
++}
++
++10) PerpendicularRaysFromPoint
++Use when two charges are at known distances from M and the electric fields at M are perpendicular.
++
++{
++  "type": "PerpendicularRaysFromPoint",
++  "center": "M",
++  "points": ["A", "B"],
++  "distances": [
++    {"value": 2.80, "unit": "cm"},
++    {"value": 2.80, "unit": "cm"}
++  ]
++}
++
++============================================================
++QUERY RULES
++============================================================
++
++net_force:
++- target must be a charge id, e.g. "q3".
++- unit normally "N".
++
++electric_field:
++- target can be a point id, e.g. "M", or a charge id, e.g. "q3".
++- If asking "field at the position of q3", set target to "q3" so the solver excludes q3's own field.
++- unit can be "V/m" or "N/C".
++
++medium:
++- If the problem says dielectric constant ε = 2.2, include:
++  "medium": {"relative_permittivity": 2.2}
++- If in air/vacuum and no dielectric constant is given, omit medium.
++
++============================================================
++CRITICAL EXTRACTION RULES
++============================================================
++
++- Keep original numeric values and units from the problem.
++- Do not compute derived distances, fields, forces, coordinates, or final answers.
++- Map q1/q2/q3 to the point where each is placed.
++- If the problem gives AB, AC, BC and does not explicitly say collinear, use PairwiseDistances, not Collinear.
++- Use retrieved examples to match the closest pattern.
++- Return JSON only.
++"""
++
++
++EQUATIONS_PROMPT = r"""
++You are a schema extraction engine for scalar physics equation problems.
++
++Return ONE valid JSON object only.
++Do not solve the problem.
++Do not include markdown.
++Do not include explanations.
++
++Domain:
++equations
++
++Use this domain for scalar formula/algebra problems.
++
++Do NOT use this domain for capacitor state-transition problems involving:
++disconnecting, reconnecting to source, inserting dielectric after disconnecting,
++changing plate distance after disconnecting, short circuit, or charge redistribution.
++Those are capacitor_state.
++
++Do NOT use this domain for Coulomb net-force vector geometry problems with charges
++placed at points, vertices, lines, triangles, or explicit coordinates.
++Those are electrostatics.
++
++Canonical schema shape:
++
++{
++  "domain": "equations",
++  "objects": [
++    {
++      "id": "<object_id>",
++      "type": "<quantity_type>",
++      "role": "<given|query|constant|intermediate>",
++      "value": <number_or_null>,
++      "unit": "<unit>",
++      "symbol": "<optional_symbol>"
++    }
++  ],
++  "relations": [
++    {
++      "type": "formula",
++      "name": "<formula_name_from_retrieved_formula_docs>",
++      "objects": ["<object_id>", "..."]
++    }
++  ],
++  "constraints": []
++}
++
++Important:
++- Use only formula names from Relevant formula docs.
++- Use the retrieved schema_template as the closest structural guide.
++- Do not invent formula names.
++- Do not compute derived quantities in the schema.
++- Use original numeric values from the problem.
++- The query quantity must have role = "query" and value = null.
++- Use ASCII micro-units when possible: uF, uC, uJ, uN.
++- Return JSON only.
++"""
++
++
++DOMAIN_PROMPTS = {
++    "capacitor_state": CAPACITOR_STATE_PROMPT,
++    "electrostatics": ELECTROSTATICS_PROMPT,
++    "equations": EQUATIONS_PROMPT,
++}
++
++
+diff --git a/src/xai_physics/llm/prompt_builder.py b/src/xai_physics/llm/prompt_builder.py
+index b725876..ce17045 100644
+--- a/src/xai_physics/llm/prompt_builder.py
++++ b/src/xai_physics/llm/prompt_builder.py
+@@ -1,225 +1,258 @@
+-from __future__ import annotations
+-
+-from dataclasses import dataclass, field
+-import json
+-from typing import Any
+-
+-from xai_physics.llm.domain_classifier import classify_domain, DomainDecision
+-from xai_physics.llm.domain_prompts import DOMAIN_PROMPTS
+-from xai_physics.domains.capacitor_state.retrieval.pipeline import retrieve_capacitor_context
+-from xai_physics.domains.equations.retrieval.pipeline import retrieve_equations_context
+-
+-
+-@dataclass
+-class PromptBuildResult:
+-    domain_decision: DomainDecision
+-    prompt: str
+-    examples: list[dict[str, Any]] = field(default_factory=list)
+-    formulas: list[dict[str, Any]] = field(default_factory=list)
+-    tags: list[str] = field(default_factory=list)
+-    retrieval_debug: dict[str, Any] = field(default_factory=dict)
+-
+-
+-def format_examples(examples: list[dict[str, Any]]) -> str:
+-    if not examples:
+-        return ""
+-
+-    blocks: list[str] = []
+-
+-    for i, ex in enumerate(examples, 1):
+-        problem = ex.get("problem", "")
+-        schema = ex.get("schema", {})
+-        tags = ex.get("tags", [])
+-
+-        schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
+-
+-        blocks.append(
+-            f"Example {i}\n"
+-            f"ID: {ex.get('id', '')}\n"
+-            f"Tags: {tags}\n"
+-            f"Problem:\n{problem}\n\n"
+-            f"JSON:\n{schema_json}\n"
+-        )
+-
+-    return "\n".join(blocks)
+-
+-
+-def format_formula_docs(formulas: list[dict[str, Any]]) -> str:
+-    if not formulas:
+-        return ""
+-
+-    blocks: list[str] = []
+-
+-    for i, item in enumerate(formulas, 1):
+-        schema_template = item.get("schema_template", {})
+-        schema_json = json.dumps(schema_template, ensure_ascii=False, indent=2)
+-
+-        blocks.append(
+-            f"Formula {i}\n"
+-            f"ID: {item.get('id', '')}\n"
+-            f"Name: {item.get('name', '')}\n"
+-            f"Equation: {item.get('equation', '')}\n"
+-            f"Description: {item.get('description', '')}\n"
+-            f"Quantity types: {item.get('quantity_types', [])}\n"
+-            f"Query types: {item.get('query_types', [])}\n"
+-            f"Tags: {item.get('tags', [])}\n"
+-            f"Schema template:\n{schema_json}\n"
+-        )
+-
+-    return "\n".join(blocks)
+-
+-
+-def _build_capacitor_examples(problem: str, k: int) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
+-    retrieval = retrieve_capacitor_context(
+-        problem=problem,
+-        vector_top_k=max(5, k + 2),
+-        final_top_k=k,
+-    )
+-
+-    examples: list[dict[str, Any]] = []
+-
+-    for item in retrieval.selected_examples:
+-        ex = item.example
+-        examples.append(
+-            {
+-                "id": ex.id,
+-                "domain": ex.domain,
+-                "tags": ex.tags,
+-                "problem": ex.problem,
+-                "schema": ex.schema,
+-                "retrieval": {
+-                    "vector_score": item.vector_score,
+-                    "rule_score": item.rule_score,
+-                    "rerank_score": item.rerank_score,
+-                    "matched_tags": item.matched_tags,
+-                },
+-            }
+-        )
+-
+-    return examples, retrieval.final_tags, retrieval.debug
+-
+-
+-def _build_equations_context(
+-    problem: str,
+-    k: int,
+-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], dict[str, Any]]:
+-    retrieval = retrieve_equations_context(
+-        problem=problem,
+-        formula_top_k=max(3, k + 1),
+-        example_top_k=k,
+-    )
+-
+-    formulas: list[dict[str, Any]] = []
+-    examples: list[dict[str, Any]] = []
+-
+-    for item in retrieval.selected_formulas:
+-        formula = item.formula
+-        formulas.append(
+-            {
+-                "id": formula.id,
+-                "name": formula.name,
+-                "equation": formula.equation,
+-                "description": formula.description,
+-                "quantity_types": formula.quantity_types,
+-                "query_types": formula.query_types,
+-                "tags": formula.tags,
+-                "schema_template": formula.schema_template,
+-                "retrieval": {
+-                    "vector_score": item.vector_score,
+-                    "rule_score": item.rule_score,
+-                    "tag_score": item.tag_score,
+-                    "rerank_score": item.rerank_score,
+-                    "matched_tags": item.matched_tags,
+-                },
+-            }
+-        )
+-
+-    for item in retrieval.selected_examples:
+-        ex = item.example
+-        examples.append(
+-            {
+-                "id": ex.id,
+-                "domain": "equations",
+-                "formula_id": ex.formula_id,
+-                "tags": ex.tags,
+-                "problem": ex.problem,
+-                "schema": ex.schema,
+-                "retrieval": {
+-                    "vector_score": item.vector_score,
+-                    "formula_score": item.formula_score,
+-                    "tag_score": item.tag_score,
+-                    "rerank_score": item.rerank_score,
+-                    "matched_tags": item.matched_tags,
+-                },
+-            }
+-        )
+-
+-    return examples, formulas, retrieval.final_tags, retrieval.debug
+-
+-
+-def build_schema_prompt(
+-    problem: str,
+-    examples: list[dict[str, Any]] | None = None,
+-    k: int = 3,
+-) -> PromptBuildResult:
+-    decision = classify_domain(problem)
+-
+-    if decision.domain not in DOMAIN_PROMPTS:
+-        prompt = (
+-            "The problem could not be classified into a supported domain.\n"
+-            "Supported domains: capacitor_state, electrostatics, equations.\n"
+-            f"Problem:\n{problem}\n"
+-        )
+-        return PromptBuildResult(
+-            domain_decision=decision,
+-            prompt=prompt,
+-            examples=[],
+-            formulas=[],
+-            tags=decision.tags,
+-            retrieval_debug={},
+-        )
+-
+-    retrieval_debug: dict[str, Any] = {}
+-    final_tags = list(decision.tags)
+-    formulas: list[dict[str, Any]] = []
+-
+-    if examples is None:
+-        if decision.domain == "capacitor_state":
+-            examples, final_tags, retrieval_debug = _build_capacitor_examples(problem, k=k)
+-        elif decision.domain == "equations":
+-            examples, formulas, final_tags, retrieval_debug = _build_equations_context(problem, k=k)
+-        else:
+-            examples = []
+-
+-    base_prompt = DOMAIN_PROMPTS[decision.domain]
+-    formula_block = format_formula_docs(formulas)
+-    example_block = format_examples(examples)
+-
+-    prompt_parts = [
+-        base_prompt.strip(),
+-    ]
+-
+-    if final_tags:
+-        prompt_parts.append("\nDetected tags:\n")
+-        prompt_parts.append(json.dumps(final_tags, ensure_ascii=False))
+-
+-    if formula_block:
+-        prompt_parts.append("\nRelevant formula docs:\n")
+-        prompt_parts.append(formula_block)
+-
+-    if example_block:
+-        prompt_parts.append("\nRetrieved examples:\n")
+-        prompt_parts.append(example_block)
+-
+-    prompt_parts.append("\nUser problem:\n")
+-    prompt_parts.append(problem)
+-    prompt_parts.append("\nReturn JSON only.")
+-
+-    return PromptBuildResult(
+-        domain_decision=decision,
+-        prompt="\n".join(prompt_parts),
+-        examples=examples,
+-        formulas=formulas,
+-        tags=final_tags,
+-        retrieval_debug=retrieval_debug,
+-    )
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++import json
++from typing import Any
++
++from xai_physics.llm.domain_classifier import classify_domain, DomainDecision
++from xai_physics.llm.domain_prompts import DOMAIN_PROMPTS
++from xai_physics.domains.capacitor_state.retrieval.pipeline import retrieve_capacitor_context
++from xai_physics.domains.equations.retrieval.pipeline import retrieve_equations_context
++from xai_physics.domains.electrostatics.retrieval.pipeline import retrieve_electrostatics_context
++
++
++@dataclass
++class PromptBuildResult:
++    domain_decision: DomainDecision
++    prompt: str
++    examples: list[dict[str, Any]] = field(default_factory=list)
++    formulas: list[dict[str, Any]] = field(default_factory=list)
++    tags: list[str] = field(default_factory=list)
++    retrieval_debug: dict[str, Any] = field(default_factory=dict)
++
++
++def format_examples(examples: list[dict[str, Any]]) -> str:
++    if not examples:
++        return ""
++
++    blocks: list[str] = []
++
++    for i, ex in enumerate(examples, 1):
++        problem = ex.get("problem", "")
++        schema = ex.get("schema", {})
++        tags = ex.get("tags", [])
++
++        schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
++
++        blocks.append(
++            f"Example {i}\n"
++            f"ID: {ex.get('id', '')}\n"
++            f"Tags: {tags}\n"
++            f"Problem:\n{problem}\n\n"
++            f"JSON:\n{schema_json}\n"
++        )
++
++    return "\n".join(blocks)
++
++
++def format_formula_docs(formulas: list[dict[str, Any]]) -> str:
++    if not formulas:
++        return ""
++
++    blocks: list[str] = []
++
++    for i, item in enumerate(formulas, 1):
++        schema_template = item.get("schema_template", {})
++        schema_json = json.dumps(schema_template, ensure_ascii=False, indent=2)
++
++        blocks.append(
++            f"Formula {i}\n"
++            f"ID: {item.get('id', '')}\n"
++            f"Name: {item.get('name', '')}\n"
++            f"Equation: {item.get('equation', '')}\n"
++            f"Description: {item.get('description', '')}\n"
++            f"Quantity types: {item.get('quantity_types', [])}\n"
++            f"Query types: {item.get('query_types', [])}\n"
++            f"Tags: {item.get('tags', [])}\n"
++            f"Schema template:\n{schema_json}\n"
++        )
++
++    return "\n".join(blocks)
++
++
++def _build_capacitor_examples(problem: str, k: int) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
++    retrieval = retrieve_capacitor_context(
++        problem=problem,
++        vector_top_k=max(5, k + 2),
++        final_top_k=k,
++    )
++
++    examples: list[dict[str, Any]] = []
++
++    for item in retrieval.selected_examples:
++        ex = item.example
++        examples.append(
++            {
++                "id": ex.id,
++                "domain": ex.domain,
++                "tags": ex.tags,
++                "problem": ex.problem,
++                "schema": ex.schema,
++                "retrieval": {
++                    "vector_score": item.vector_score,
++                    "rule_score": item.rule_score,
++                    "rerank_score": item.rerank_score,
++                    "matched_tags": item.matched_tags,
++                },
++            }
++        )
++
++    return examples, retrieval.final_tags, retrieval.debug
++
++
++def _build_equations_context(
++    problem: str,
++    k: int,
++) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], dict[str, Any]]:
++    retrieval = retrieve_equations_context(
++        problem=problem,
++        formula_top_k=max(3, k + 1),
++        example_top_k=k,
++    )
++
++    formulas: list[dict[str, Any]] = []
++    examples: list[dict[str, Any]] = []
++
++    for item in retrieval.selected_formulas:
++        formula = item.formula
++        formulas.append(
++            {
++                "id": formula.id,
++                "name": formula.name,
++                "equation": formula.equation,
++                "description": formula.description,
++                "quantity_types": formula.quantity_types,
++                "query_types": formula.query_types,
++                "tags": formula.tags,
++                "schema_template": formula.schema_template,
++                "retrieval": {
++                    "vector_score": item.vector_score,
++                    "rule_score": item.rule_score,
++                    "tag_score": item.tag_score,
++                    "rerank_score": item.rerank_score,
++                    "matched_tags": item.matched_tags,
++                },
++            }
++        )
++
++    for item in retrieval.selected_examples:
++        ex = item.example
++        examples.append(
++            {
++                "id": ex.id,
++                "domain": "equations",
++                "formula_id": ex.formula_id,
++                "tags": ex.tags,
++                "problem": ex.problem,
++                "schema": ex.schema,
++                "retrieval": {
++                    "vector_score": item.vector_score,
++                    "formula_score": item.formula_score,
++                    "tag_score": item.tag_score,
++                    "rerank_score": item.rerank_score,
++                    "matched_tags": item.matched_tags,
++                },
++            }
++        )
++
++    return examples, formulas, retrieval.final_tags, retrieval.debug
++
++
++def _build_electrostatics_examples(problem: str, k: int) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
++    retrieval = retrieve_electrostatics_context(
++        problem=problem,
++        vector_top_k=max(8, k + 4),
++        final_top_k=max(4, k),
++    )
++
++    examples: list[dict[str, Any]] = []
++
++    for item in retrieval.selected_examples:
++        ex = item.example
++        examples.append(
++            {
++                "id": ex.id,
++                "domain": ex.domain,
++                "tags": ex.tags,
++                "problem": ex.problem,
++                "schema": ex.schema,
++                "retrieval": {
++                    "vector_score": item.vector_score,
++                    "rule_score": item.rule_score,
++                    "rerank_score": item.rerank_score,
++                    "matched_tags": item.matched_tags,
++                },
++            }
++        )
++
++    return examples, retrieval.final_tags, retrieval.debug
++
++
++def build_schema_prompt(
++    problem: str,
++    examples: list[dict[str, Any]] | None = None,
++    k: int = 3,
++) -> PromptBuildResult:
++    decision = classify_domain(problem)
++
++    if decision.domain not in DOMAIN_PROMPTS:
++        prompt = (
++            "The problem could not be classified into a supported domain.\n"
++            "Supported domains: capacitor_state, electrostatics, equations.\n"
++            f"Problem:\n{problem}\n"
++        )
++        return PromptBuildResult(
++            domain_decision=decision,
++            prompt=prompt,
++            examples=[],
++            formulas=[],
++            tags=decision.tags,
++            retrieval_debug={},
++        )
++
++    retrieval_debug: dict[str, Any] = {}
++    final_tags = list(decision.tags)
++    formulas: list[dict[str, Any]] = []
++
++    if examples is None:
++        if decision.domain == "capacitor_state":
++            examples, final_tags, retrieval_debug = _build_capacitor_examples(problem, k=k)
++        elif decision.domain == "equations":
++            examples, formulas, final_tags, retrieval_debug = _build_equations_context(problem, k=k)
++        elif decision.domain == "electrostatics":
++            examples, final_tags, retrieval_debug = _build_electrostatics_examples(problem, k=k)
++        else:
++            examples = []
++
++    base_prompt = DOMAIN_PROMPTS[decision.domain]
++    formula_block = format_formula_docs(formulas)
++    example_block = format_examples(examples)
++
++    prompt_parts = [
++        base_prompt.strip(),
++    ]
++
++    if final_tags:
++        prompt_parts.append("\nDetected tags:\n")
++        prompt_parts.append(json.dumps(final_tags, ensure_ascii=False))
++
++    if formula_block:
++        prompt_parts.append("\nRelevant formula docs:\n")
++        prompt_parts.append(formula_block)
++
++    if example_block:
++        prompt_parts.append("\nRetrieved examples:\n")
++        prompt_parts.append(example_block)
++
++    prompt_parts.append("\nUser problem:\n")
++    prompt_parts.append(problem)
++    prompt_parts.append("\nReturn JSON only.")
++
++    return PromptBuildResult(
++        domain_decision=decision,
++        prompt="\n".join(prompt_parts),
++        examples=examples,
++        formulas=formulas,
++        tags=final_tags,
++        retrieval_debug=retrieval_debug,
++    )
+diff --git a/tests/test_electrostatics_expanded_engine.py b/tests/test_electrostatics_expanded_engine.py
+new file mode 100644
+index 0000000..6bc63b6
+--- /dev/null
++++ b/tests/test_electrostatics_expanded_engine.py
+@@ -0,0 +1,125 @@
++from xai_physics.domains.electrostatics.coordinate_builder import build_coordinates
++from xai_physics.domains.electrostatics.engine import solve_schema
++from xai_physics.llm.prompt_builder import build_schema_prompt
++
++
++def _num(answer: str) -> float:
++    return float(str(answer).split()[0])
++
++
++def test_pairwise_distances_ld003_schema_solves():
++    schema = {
++        "domain": "electrostatics",
++        "points": [{"id": "A"}, {"id": "B"}, {"id": "C"}],
++        "geometry": [
++            {
++                "type": "PairwiseDistances",
++                "points": ["A", "B", "C"],
++                "distances": [
++                    {"between": ["A", "B"], "value": 20, "unit": "cm"},
++                    {"between": ["A", "C"], "value": 12, "unit": "cm"},
++                    {"between": ["B", "C"], "value": 16, "unit": "cm"},
++                ],
++                "orientation": "above",
++            }
++        ],
++        "charges": [
++            {"id": "q1", "charge": {"value": -3e-6, "unit": "C"}, "at": "A"},
++            {"id": "q2", "charge": {"value": 8e-6, "unit": "C"}, "at": "B"},
++            {"id": "q3", "charge": {"value": 2e-6, "unit": "C"}, "at": "C"},
++        ],
++        "queries": [{"type": "net_force", "target": "q3", "output": "magnitude", "unit": "N"}],
++    }
++
++    coords = build_coordinates(schema)
++    assert abs(coords["C"].x - 0.072) < 1e-12
++    assert abs(coords["C"].y - 0.096) < 1e-12
++
++    result = solve_schema(schema)
++    assert result.status == "solved"
++    assert abs(_num(result.answer) - 6.76) < 0.01
++
++
++def test_midpoint_force_cancels_for_equal_charges():
++    schema = {
++        "domain": "electrostatics",
++        "points": [{"id": "A"}, {"id": "B"}, {"id": "M"}],
++        "geometry": [
++            {"type": "PairwiseDistances", "points": ["A", "B"], "distances": [{"between": ["A", "B"], "value": 4, "unit": "cm"}]},
++            {"type": "Midpoint", "point": "M", "between": ["A", "B"]},
++        ],
++        "charges": [
++            {"id": "q1", "charge": {"value": 1, "unit": "uC"}, "at": "A"},
++            {"id": "q2", "charge": {"value": 1, "unit": "uC"}, "at": "B"},
++            {"id": "q0", "charge": {"value": 2, "unit": "uC"}, "at": "M"},
++        ],
++        "queries": [{"type": "net_force", "target": "q0", "output": "magnitude", "unit": "N"}],
++    }
++
++    result = solve_schema(schema)
++    assert result.status == "solved"
++    assert result.answer == "0 N"
++
++
++def test_perpendicular_bisector_force_schema_solves():
++    schema = {
++        "domain": "electrostatics",
++        "points": [{"id": "A"}, {"id": "B"}, {"id": "M"}],
++        "geometry": [
++            {"type": "PairwiseDistances", "points": ["A", "B"], "distances": [{"between": ["A", "B"], "value": 6, "unit": "cm"}]},
++            {"type": "PerpendicularBisectorPoint", "point": "M", "between": ["A", "B"], "distance_from_segment": {"value": 3, "unit": "cm"}},
++        ],
++        "charges": [
++            {"id": "q1", "charge": {"value": 2e-6, "unit": "C"}, "at": "A"},
++            {"id": "q2", "charge": {"value": 2e-6, "unit": "C"}, "at": "B"},
++            {"id": "q", "charge": {"value": 1e-6, "unit": "C"}, "at": "M"},
++        ],
++        "queries": [{"type": "net_force", "target": "q", "output": "magnitude", "unit": "N"}],
++    }
++
++    result = solve_schema(schema)
++    assert result.status == "solved"
++    assert abs(_num(result.answer) - 14.1421) < 0.01
++
++
++def test_electric_field_at_charge_position_excludes_self_charge():
++    schema = {
++        "domain": "electrostatics",
++        "points": [{"id": "A"}, {"id": "B"}, {"id": "C"}],
++        "geometry": [{"type": "EquilateralTriangle", "points": ["A", "B", "C"], "side": {"value": 10, "unit": "cm"}}],
++        "charges": [
++            {"id": "q1", "charge": {"value": 1, "unit": "uC"}, "at": "A"},
++            {"id": "q2", "charge": {"value": 1, "unit": "uC"}, "at": "B"},
++            {"id": "q3", "charge": {"value": 1, "unit": "uC"}, "at": "C"},
++        ],
++        "queries": [{"type": "electric_field", "target": "q3", "output": "magnitude", "unit": "V/m"}],
++    }
++
++    result = solve_schema(schema)
++    assert result.status == "solved"
++    assert abs(_num(result.answer) - 1558845.7) < 10
++
++
++def test_resultant_vector_schema_solves_direct_force_problem():
++    schema = {
++        "domain": "electrostatics",
++        "vectors": [
++            {"id": "F1", "magnitude": {"value": 5, "unit": "N"}, "angle_deg": 0},
++            {"id": "F2", "magnitude": {"value": 12, "unit": "N"}, "angle_deg": 60},
++        ],
++        "queries": [{"type": "resultant_vector", "target": "vectors", "output": "magnitude", "unit": "N"}],
++    }
++
++    result = solve_schema(schema)
++    assert result.status == "solved"
++    assert abs(_num(result.answer) - 15.1327) < 0.001
++
++
++def test_electrostatics_prompt_retrieves_examples():
++    problem = "Points A and B are separated by 20 cm. q1 is at A, q2 is at B, and q3 is at C with AC = 12 cm and BC = 16 cm. Find the net force on q3."
++    built = build_schema_prompt(problem, k=2)
++
++    assert built.domain_decision.domain == "electrostatics"
++    assert built.examples
++    assert "PairwiseDistances" in built.prompt
++    assert "elec_pairwise_triangle_ld003" in {ex["id"] for ex in built.examples}
+diff --git a/tests/test_prompt_builder_capacitor_retrieval.py b/tests/test_prompt_builder_capacitor_retrieval.py
+index 3bfb53d..527d6ea 100644
+--- a/tests/test_prompt_builder_capacitor_retrieval.py
++++ b/tests/test_prompt_builder_capacitor_retrieval.py
+@@ -1,4 +1,4 @@
+-﻿from xai_physics.llm.prompt_builder import build_schema_prompt
++from xai_physics.llm.prompt_builder import build_schema_prompt
+ 
+ 
+ def test_capacitor_prompt_uses_domain_retrieval_base():
+@@ -45,5 +45,6 @@ def test_electrostatics_prompt_does_not_use_capacitor_retrieval():
+     built = build_schema_prompt(problem)
+ 
+     assert built.domain_decision.domain == "electrostatics"
+-    assert built.examples == []
+-    assert "cap_td" not in built.prompt
++    assert built.examples
++    assert all(ex.get("domain") == "electrostatics" for ex in built.examples)
++    assert "cap_td" not in built.prompt

@@ -8,6 +8,7 @@ from xai_physics.llm.domain_classifier import classify_domain, DomainDecision
 from xai_physics.llm.domain_prompts import DOMAIN_PROMPTS
 from xai_physics.domains.capacitor_state.retrieval.pipeline import retrieve_capacitor_context
 from xai_physics.domains.equations.retrieval.pipeline import retrieve_equations_context
+from xai_physics.domains.electrostatics.retrieval.pipeline import retrieve_electrostatics_context
 
 
 @dataclass
@@ -105,8 +106,8 @@ def _build_equations_context(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], dict[str, Any]]:
     retrieval = retrieve_equations_context(
         problem=problem,
-        formula_top_k=max(3, k + 1),
-        example_top_k=k,
+        formula_top_k=max(5, k + 3),
+        example_top_k=max(5, k + 3),
     )
 
     formulas: list[dict[str, Any]] = []
@@ -157,6 +158,36 @@ def _build_equations_context(
     return examples, formulas, retrieval.final_tags, retrieval.debug
 
 
+def _build_electrostatics_examples(problem: str, k: int) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
+    retrieval = retrieve_electrostatics_context(
+        problem=problem,
+        vector_top_k=max(8, k + 4),
+        final_top_k=max(4, k),
+    )
+
+    examples: list[dict[str, Any]] = []
+
+    for item in retrieval.selected_examples:
+        ex = item.example
+        examples.append(
+            {
+                "id": ex.id,
+                "domain": ex.domain,
+                "tags": ex.tags,
+                "problem": ex.problem,
+                "schema": ex.schema,
+                "retrieval": {
+                    "vector_score": item.vector_score,
+                    "rule_score": item.rule_score,
+                    "rerank_score": item.rerank_score,
+                    "matched_tags": item.matched_tags,
+                },
+            }
+        )
+
+    return examples, retrieval.final_tags, retrieval.debug
+
+
 def build_schema_prompt(
     problem: str,
     examples: list[dict[str, Any]] | None = None,
@@ -188,6 +219,8 @@ def build_schema_prompt(
             examples, final_tags, retrieval_debug = _build_capacitor_examples(problem, k=k)
         elif decision.domain == "equations":
             examples, formulas, final_tags, retrieval_debug = _build_equations_context(problem, k=k)
+        elif decision.domain == "electrostatics":
+            examples, final_tags, retrieval_debug = _build_electrostatics_examples(problem, k=k)
         else:
             examples = []
 

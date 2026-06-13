@@ -60,6 +60,16 @@ UNIT_TO_SI = {
     "mN": 1e-3,
     "uN": 1e-6,
     "μN": 1e-6,
+
+    # electric field
+    "V/m": 1.0,
+    "N/C": 1.0,
+    "kV/m": 1e3,
+
+    # angle / dimensionless helpers
+    "degree": 1.0,
+    "degrees": 1.0,
+    "deg": 1.0,
     "?F": 1e-6,
     "?C": 1e-6,
     "?J": 1e-6,
@@ -71,46 +81,30 @@ UNIT_TO_SI = {
 }
 
 
-def normalize_unit(unit: str) -> str:
-    # AUTO_MICRO_UNIT_NORMALIZATION
-    unit = str(unit).strip()
-
-    # Normalize common micro symbols and corrupted Windows/terminal variants.
-    unit = unit.replace("?", "?")
-    unit = unit.replace("?F", "uF")
-    unit = unit.replace("?C", "uC")
-    unit = unit.replace("?J", "uJ")
-    unit = unit.replace("?N", "uN")
-    unit = unit.replace("?m", "um")
-
-    if unit in {"?F", "?F"}:
-        return "uF"
-    if unit in {"?C", "?C"}:
-        return "uC"
-    if unit in {"?J", "?J"}:
-        return "uJ"
-    if unit in {"?N", "?N"}:
-        return "uN"
-    if unit in {"?m", "?m"}:
-        return "um"
+def normalize_unit(unit: str | None) -> str:
+    if unit is None:
+        return ""
 
     unit = str(unit).strip()
+    if not unit or unit.lower() in {"none", "null", "nan"}:
+        return ""
 
-    # Normalize common micro symbols / mojibake.
     unit = unit.replace("µ", "μ")
+    unit = unit.replace("Ω", "Ω")
+    unit = unit.replace("^2", "²")
+    unit = unit.replace("^3", "³")
+    unit = unit.replace("Ohm", "ohm")
+    unit = unit.replace("ohms", "ohm")
 
-    # Windows / terminal encoding may corrupt μ into ?.
-    # Treat exact ?F, ?C, ?J, ?N, ?m as micro-units.
-    if unit in {"?F", "？F"}:
-        return "uF"
-    if unit in {"?C", "？C"}:
-        return "uC"
-    if unit in {"?J", "？J"}:
-        return "uJ"
-    if unit in {"?N", "？N"}:
-        return "uN"
-    if unit in {"?m", "？m"}:
-        return "um"
+    # Normalize spaces around slash: "N / C" -> "N/C".
+    unit = unit.replace(" / ", "/").replace(" /", "/").replace("/ ", "/")
+
+    mojibake = {
+        "?F": "uF", "?C": "uC", "?J": "uJ", "?N": "uN", "?m": "um",
+        "？F": "uF", "？C": "uC", "？J": "uJ", "？N": "uN", "？m": "um",
+    }
+    if unit in mojibake:
+        return mojibake[unit]
 
     # Normalize micro symbol to ASCII aliases already supported by UNIT_TO_SI.
     unit = unit.replace("μF", "uF")
@@ -119,9 +113,92 @@ def normalize_unit(unit: str) -> str:
     unit = unit.replace("μN", "uN")
     unit = unit.replace("μm", "um")
 
-    unit = unit.replace("Ohm", "ohm")
+    aliases = {
+        # bad placeholders
+        "unitless": "",
+        "dimensionless": "",
+        "si": "",
 
-    return unit
+        # charge aliases, but intentionally do NOT map bare "c" here.
+        # In electrostatics geometry Qwen often writes "c" for "cm".
+        "coulomb": "C",
+        "coulombs": "C",
+        "mc": "mC",
+        "millicoulomb": "mC",
+        "millicoulombs": "mC",
+        "uc": "uC",
+        "microcoulomb": "uC",
+        "microcoulombs": "uC",
+        "nc": "nC",
+        "nanocoulomb": "nC",
+        "nanocoulombs": "nC",
+        "pc": "pC",
+
+        # force aliases, but intentionally do NOT map bare "n" globally.
+        "newton": "N",
+        "newtons": "N",
+        "mn": "mN",
+        "un": "uN",
+
+        # field
+        "v/m": "V/m",
+        "volt/meter": "V/m",
+        "volts/meter": "V/m",
+        "n/c": "N/C",
+        "newton/coulomb": "N/C",
+        "newtons/coulomb": "N/C",
+
+        # voltage
+        "v": "V",
+        "mv": "mV",
+        "kv": "kV",
+
+        # capacitance
+        "f": "F",
+        "farad": "F",
+        "farads": "F",
+        "mf": "mF",
+        "uf": "uF",
+        "nf": "nF",
+        "pf": "pF",
+
+        # length
+        "meter": "m",
+        "meters": "m",
+        "metre": "m",
+        "metres": "m",
+        "centimeter": "cm",
+        "centimeters": "cm",
+        "centimetre": "cm",
+        "centimetres": "cm",
+        "millimeter": "mm",
+        "millimeters": "mm",
+        "millimetre": "mm",
+        "millimetres": "mm",
+
+        # area
+        "m2": "m^2",
+        "cm2": "cm^2",
+        "mm2": "mm^2",
+
+        # energy
+        "j": "J",
+        "joule": "J",
+        "joules": "J",
+        "mj": "mJ",
+        "uj": "uJ",
+        "nj": "nJ",
+        "pj": "pJ",
+
+        # resistance
+        "ω": "Ω",
+        "kohm": "kohm",
+        "kω": "kΩ",
+        "mohm": "Mohm",
+        "mω": "MΩ",
+    }
+
+    return aliases.get(unit.lower(), unit)
 
 
 def to_si(value: float, unit: str) -> float:

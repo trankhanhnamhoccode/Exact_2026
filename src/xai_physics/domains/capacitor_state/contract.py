@@ -19,6 +19,8 @@ SUPPORTED_EVENTS = {
     "ShortCircuit",
     "ConnectToInductor",
     "ReplaceDielectric",
+    "ReplaceCapacitor",
+    "SetCapacitance",
 }
 
 SUPPORTED_QUERIES = {
@@ -29,6 +31,8 @@ SUPPORTED_QUERIES = {
     "energy_ratio",
     "capacitance_ratio",
     "energy_percent",
+    "energy_change",
+    "energy_reduction",
 }
 
 
@@ -37,25 +41,40 @@ def _err(message: str) -> None:
 
 
 def _is_quantity_dict(data: Any) -> bool:
-    return (
-        isinstance(data, dict)
-        and "value" in data
-        and "unit" in data
-        and isinstance(data["value"], (int, float))
-        and isinstance(data["unit"], str)
-    )
+    if data is None:
+        return False
+    if not isinstance(data, dict):
+        return False
+    if not data:
+        return False
+    value = data.get("value")
+    if value is None:
+        # Unknown quantities are allowed in capacitor_state schemas; the engine may infer them.
+        return True
+    if isinstance(value, bool):
+        return False
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    unit = data.get("unit", "")
+    return unit is None or isinstance(unit, str)
 
 
 def _validate_quantity(data: Any, path: str) -> None:
-    if data is None:
+    if data is None or data == {}:
         return
 
     if not _is_quantity_dict(data):
         _err(f"{path} must be a quantity dict with numeric value and string unit.")
 
-    unit = normalize_unit(data["unit"])
-    if unit not in UNIT_TO_SI:
-        _err(f"{path}.unit is unsupported: {data['unit']}")
+    if data.get("value") is None:
+        return
+
+    unit = normalize_unit(data.get("unit", ""))
+    data["unit"] = unit
+    if unit and unit not in UNIT_TO_SI:
+        _err(f"{path}.unit is unsupported: {data.get('unit')}")
 
 
 def _validate_entities(schema: dict[str, Any]) -> set[str]:
@@ -151,6 +170,20 @@ def _validate_event(event: dict[str, Any], index: int, entity_ids: set[str]) -> 
         k = params.get("dielectric_constant", params.get("k"))
         if not isinstance(k, (int, float)) or k <= 0:
             _err(f"{path}.params.dielectric_constant must be a positive number.")
+
+    if event_type in {"ReplaceCapacitor", "SetCapacitance"}:
+        new_cap = (
+            params.get("new_capacitance")
+            or params.get("capacitance")
+            or params.get("final_capacitance")
+        )
+        _validate_quantity(new_cap, f"{path}.params.new_capacitance")
+        if new_cap is None or new_cap == {} or new_cap.get("value") is None:
+            _err(f"{path}.params.new_capacitance is required.")
+
+        hold = params.get("hold") or params.get("hold_policy") or params.get("voltage_policy")
+        if hold is not None and not isinstance(hold, str):
+            _err(f"{path}.params.hold must be a string if provided.")
 
     if event_type in {"DistanceScale", "AreaScale"}:
         factor = params.get("factor")

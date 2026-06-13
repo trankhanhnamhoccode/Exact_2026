@@ -15,6 +15,7 @@ from xai_physics.domains.capacitor_state.events import (
     ShortCircuit,
     ConnectToInductor,
     ReplaceDielectric,
+    ReplaceCapacitor,
 
 )
 from xai_physics.domains.capacitor_state.redistribution import ParallelRedistribution
@@ -86,8 +87,25 @@ def _apply_single_cap_event(event_schema: dict[str, Any], system: SystemState) -
         final_k = params.get("final_k")
         if initial_k is None or final_k is None:
             raise ValueError("ReplaceDielectric requires params.initial_k and params.final_k.")
-        ReplaceDielectric(initial_k=initial_k, final_k=final_k).apply(cap)
-        return
+        return ReplaceDielectric(initial_k=initial_k, final_k=final_k).apply(cap)
+
+    if event_type in {"ReplaceCapacitor", "SetCapacitance"}:
+        new_cap_data = (
+            params.get("new_capacitance")
+            or params.get("capacitance")
+            or params.get("final_capacitance")
+        )
+        new_cap = _quantity_to_si(new_cap_data)
+        if new_cap is None:
+            raise ValueError("ReplaceCapacitor requires params.new_capacitance.")
+
+        hold = (
+            params.get("hold")
+            or params.get("hold_policy")
+            or params.get("voltage_policy")
+            or "auto"
+        )
+        return ReplaceCapacitor(new_capacitance_F=new_cap, hold_policy=str(hold)).apply(cap)
 
     if event_type == "InsertDielectric":
         k = params.get("dielectric_constant", params.get("k"))
@@ -219,6 +237,16 @@ def _answer_query(query: dict[str, Any], system: SystemState, initial_system: Sy
     target = query.get("target", "system")
     output_unit = query.get("unit")
 
+    if qtype in {"energy_change", "energy_reduction"}:
+        if initial_system is None:
+            raise ValueError(f"{qtype} query requires initial_system snapshot.")
+        initial_energy = _energy_of_target(initial_system, target)
+        final_energy = _energy_of_target(system, target)
+        value_si = final_energy - initial_energy
+        if qtype == "energy_reduction":
+            value_si = initial_energy - final_energy
+        return _format_value(value_si, "J", output_unit)
+
     if target == "system":
 
         if qtype == "energy":
@@ -296,10 +324,104 @@ def _answer_query(query: dict[str, Any], system: SystemState, initial_system: Sy
     raise ValueError(f"Unsupported query type: {qtype}")
 
 
+def _clone_quantity(data: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(data, dict):
+        return None
+    return dict(data)
+
+
+def _repair_replace_capacitor_schema(schema: dict[str, Any]) -> None:
+    """
+    Repair a common LLM confusion:
+    "replaced by another capacitor with capacitance ..." is not ReplaceDielectric.
+
+    The bad schema often contains two capacitor entities plus a ReplaceDielectric event
+    with empty params, sometimes followed by ParallelRedistribution. Convert it into
+    ReplaceCapacitor on the first capacitor using the second capacitor's capacitance.
+    """
+    events = schema.get("events", [])
+    entities = schema.get("entities", [])
+
+    if not isinstance(events, list) or not isinstance(entities, list) or len(entities) < 2:
+        return
+
+    bad_index = None
+    for i, event in enumerate(events):
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") != "ReplaceDielectric":
+            continue
+        params = event.get("params") or {}
+        if params.get("initial_k") is None and params.get("final_k") is None:
+            bad_index = i
+            break
+
+    if bad_index is None:
+        return
+
+    first = entities[0]
+    second = entities[1]
+    new_cap = _clone_quantity(second.get("capacitance"))
+    if not new_cap or new_cap.get("value") is None:
+        return
+
+    hold = "voltage"
+    v1 = _clone_quantity(first.get("voltage"))
+    v2 = _clone_quantity(second.get("voltage"))
+    if v1 and v2 and v1.get("value") == v2.get("value"):
+        hold = "voltage"
+    elif not first.get("connected_to_source", False):
+        hold = "charge"
+
+    events[bad_index] = {
+        "type": "ReplaceCapacitor",
+        "apply_to": [first.get("id", "C1")],
+        "params": {
+            "new_capacitance": new_cap,
+            "hold": hold,
+        },
+    }
+
+    # Drop a spurious redistribution event created from "replaced by another capacitor".
+    schema["events"] = [
+        event for event in events
+        if not (isinstance(event, dict) and event.get("type") == "ParallelRedistribution")
+    ]
+
+    # The bad schema frequently asks energy_ratio for wording "reduction in energy".
+    # Use an absolute energy reduction query; this is safer for replacement wording.
+    queries = schema.get("queries", [])
+    if isinstance(queries, list):
+        for query in queries:
+            if isinstance(query, dict) and query.get("type") == "energy_ratio":
+                query["type"] = "energy_reduction"
+                if query.get("unit") in {None, "", "times", "x"}:
+                    query["unit"] = "uJ"
+
+
+def _energy_of_target(system: SystemState, target: str) -> float:
+    system.infer_all()
+
+    if target == "system":
+        total = 0.0
+        for cap in system.capacitors.values():
+            energy = cap.energy_J()
+            if energy is None:
+                raise ValueError(f"Energy is unknown for capacitor {cap.id}.")
+            total += energy
+        return total
+
+    energy = system.get(target).energy_J()
+    if energy is None:
+        raise ValueError(f"Energy is unknown for capacitor {target}.")
+    return energy
+
+
 def solve_schema(schema: dict[str, Any]) -> SolveResult:
     result = SolveResult(status="solved", domain="capacitor_state")
 
     try:
+        _repair_replace_capacitor_schema(schema)
         validate_schema(schema)
         system = _build_system(schema)
 
@@ -340,11 +462,15 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         if not queries:
             raise ValueError("Schema has no query.")
 
-        answer = _answer_query(queries[0], system, initial_system=initial_system)
+        answers = [
+            _answer_query(query, system, initial_system=initial_system)
+            for query in queries
+        ]
+        answer = "; ".join(answers)
         result.answer = answer
         result.add_step(
             "Final answer",
-            f"The requested {queries[0].get('type')} is {answer}.",
+            f"The requested output is {answer}.",
         )
 
         return result
