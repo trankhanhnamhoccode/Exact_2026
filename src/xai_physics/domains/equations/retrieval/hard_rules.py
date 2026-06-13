@@ -39,6 +39,8 @@ def detect_tags(problem: str) -> list[TagHit]:
         ("period", 1.2, r"natural period|period of oscillation|oscillation period"),
         ("magnetic_flux", 1.3, r"magnetic flux|flux linkage|flux through"),
         ("turn_density", 1.3, r"turn density|turns per meter|turns/m|number of turns per meter"),
+        ("parallel_circuit", 1.4, r"parallel circuit|connected in parallel|parallel branches|parallel lamps|lamps.*parallel"),
+        ("lamp", 1.1, r"\blamp|bulb|light bulb"),
     ]
 
     for tag, score, pattern in patterns:
@@ -222,6 +224,22 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
 
     if "power" in text and "voltage" in text and ("resistance" in text or "resistor" in text):
         add("power_voltage_resistance", 5.0)
+
+    is_parallel_branch_circuit = (
+        "parallel" in text
+        and ("lamp" in text or "bulb" in text or "branch" in text or "resistor" in text or "resistance" in text)
+    )
+    if is_parallel_branch_circuit:
+        if any(phrase in text for phrase in ["total current", "main current", "current in the main circuit", "current supplied", "total intensity"]):
+            add("parallel_total_current", 8.0)
+        if any(phrase in text for phrase in ["current through", "current in each", "branch current", "current of each", "current in lamp", "current through lamp"]):
+            add("parallel_branch_current", 8.0)
+        if any(phrase in text for phrase in ["total power", "power consumed by the circuit", "total consumption", "combined power"]):
+            add("parallel_total_power", 8.0)
+        if any(phrase in text for phrase in ["power of each", "power in each", "power dissipated by each", "power of lamp", "power consumed by each lamp"]):
+            add("parallel_branch_power", 8.0)
+        if ("equivalent resistance" in text or "total resistance" in text) and "parallel" in text:
+            add("parallel_resistance", 7.0)
 
     if "flux linkage" in text or "total magnetic flux" in text:
         add("magnetic_flux_linkage", 7.0)
