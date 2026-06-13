@@ -2443,6 +2443,77 @@ def _solve_equilibrium_electric_field(schema: dict[str, Any], formula: str) -> S
     return result
 
 
+def _relation_given_objects(schema: dict[str, Any], obj_type: str | tuple[str, ...]) -> list[dict[str, Any]]:
+    rel_objs = _relation_objects(schema, _first_formula_relation(schema))
+    objects = rel_objs if rel_objs else _iter_unique_objects(schema)
+    return [obj for obj in objects if _type_matches(obj, obj_type) and obj.get("role") in {"given", "constant"} and _has_value(obj)]
+
+
+def _solve_two_charge_zero_field_distance(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("distance", "position"))
+    if query is None:
+        return _fail("Only distance/position query is supported for two-charge zero-field points.", formula)
+
+    try:
+        charges = _relation_given_objects(schema, "charge")
+        if len(charges) < 2:
+            raise ValueError("Need two given point charges.")
+        q1 = _to_si_quantity(charges[0], "C")
+        q2 = _to_si_quantity(charges[1], "C")
+        if q1 == 0 or q2 == 0:
+            raise ValueError("Charges must be non-zero.")
+
+        d_obj = _given_obj(schema, ("distance", "length", "separation"))
+        if d_obj is None:
+            raise ValueError("Missing separation between the two charges.")
+        d = _to_si_quantity(d_obj, "m")
+        if d <= 0:
+            raise ValueError("Charge separation must be positive.")
+
+        a = abs(q1)
+        b = abs(q2)
+        same_sign = q1 * q2 > 0
+        if same_sign:
+            # Zero point lies between A and B.  Let x be AM, so
+            # |q1|/x^2 = |q2|/(d-x)^2 -> x/(d-x)=sqrt(|q1|/|q2|).
+            ratio = math.sqrt(a / b)
+            x_from_a = d * ratio / (1.0 + ratio)
+        else:
+            # Zero point lies outside the segment, on the side of the smaller
+            # magnitude charge.  x_from_a is a signed coordinate with A at 0
+            # and B at d.
+            if math.isclose(a, b, rel_tol=1e-12, abs_tol=0.0):
+                return _fail("Opposite equal charges have no finite zero-field point on the line.", formula)
+            if a < b:
+                ratio = math.sqrt(a / b)
+                outside_distance = d * ratio / (1.0 - ratio)
+                x_from_a = -outside_distance
+            else:
+                ratio = math.sqrt(b / a)
+                outside_distance = d * ratio / (1.0 - ratio)
+                x_from_a = d + outside_distance
+
+        reference = str(query.get("reference") or query.get("from") or "A").strip().upper()
+        if reference in {"B", "BM", "FROM_B"}:
+            value = abs(x_from_a - d)
+        else:
+            # A/AM and coordinate-from-A questions both use the signed coordinate
+            # when outside to the left; most benchmark distance questions are
+            # phrased as AM and remain positive because abs is requested by reference.
+            value = x_from_a if reference in {"COORDINATE", "COORDINATE_FROM_A", "OX"} else abs(x_from_a)
+
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step(
+        "Formula selected",
+        "Solve the 1D point where fields from two charges cancel: |q1|/r1^2 = |q2|/r2^2.",
+    )
+    result.answer = _answer(value, query, "distance", "m")
+    return result
+
+
 def _solve_infinite_wire_electric_field(schema: dict[str, Any], formula: str) -> SolveResult:
     query = _query_obj(schema, "electric_field")
     if query is None:
@@ -3828,6 +3899,7 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "point_charge_electric_field": _solve_point_charge_electric_field,
         "electric_force_field": _solve_electric_force_field,
         "equilibrium_electric_field": _solve_equilibrium_electric_field,
+        "two_charge_zero_field_distance": _solve_two_charge_zero_field_distance,
         "infinite_wire_electric_field": _solve_infinite_wire_electric_field,
         "percentage_relative_error": _solve_percentage_relative_error,
         "absolute_error_from_actual": _solve_absolute_error_from_actual,

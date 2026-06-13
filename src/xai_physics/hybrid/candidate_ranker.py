@@ -61,7 +61,14 @@ def _intent_score(problem: str, schema: dict[str, Any]) -> float:
         score += 25 if "energy" in qtypes else -35
     if any(p in low for p in ["force acting", "net electric force", "net force", "resultant force"]):
         score += 40 if ("net_force" in qtypes or "resultant_vector" in qtypes or "force" in qtypes) else -80
-    if "electric field" in low and not any(p in low for p in ["electric field energy", "energy stored"]):
+    zero_field_location = (
+        "zero" in low
+        and any(p in low for p in ["electric field", "field strength", "resultant electric field", "net electric field"])
+        and any(p in low for p in ["where", "point", "coordinate", "distance"])
+    )
+    if zero_field_location:
+        score += 65 if qtypes & {"distance", "position"} else -70
+    elif "electric field" in low and not any(p in low for p in ["electric field energy", "energy stored"]):
         score += 30 if "electric_field" in qtypes else -40
 
     return score

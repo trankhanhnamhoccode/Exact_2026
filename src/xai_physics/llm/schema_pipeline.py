@@ -162,6 +162,21 @@ def solve_problem_with_llm(
         schema = extract_electrostatics_schema_from_text(problem)
         if schema is not None:
             schema = repair_electrostatics_schema_with_question(problem, schema)
+
+            # Some electrostatics questions are inverse/scalar formula problems
+            # (for example, find the point where E=0).  The deterministic
+            # geometry extractor may emit a checkable-but-wrong electric-field
+            # query or an incomplete geometry schema.  Give formula-driven
+            # candidates a chance before returning the deterministic result.
+            hybrid = _try_equations_hybrid_selection(
+                problem,
+                prompt_result,
+                raw_llm_output="__deterministic_electrostatics_text_extractor__",
+                deterministic_schema=schema,
+            )
+            if hybrid is not None:
+                return hybrid
+
             result = solve_schema(schema)
             result.add_step("Prompt built", f"Domain: {prompt_result.domain_decision.domain}")
             result.add_step("Deterministic electrostatics schema extracted", "Used narrow geometry/text extractor before LLM generation.")

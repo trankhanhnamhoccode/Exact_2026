@@ -18,7 +18,8 @@ def _norm(text: str) -> str:
         .replace("μ", "u")
     )
     supers = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")
-    text = text.translate(supers)
+    subs = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
+    text = text.translate(supers).translate(subs)
     text = text.replace("²", "2").replace("³", "3")
     return text
 
@@ -266,6 +267,75 @@ def _relative_permittivity_value(text: str) -> tuple[float, str] | None:
     )
 
 
+def _two_charge_values_for_zero_field(text: str, low: str) -> tuple[tuple[float, str], tuple[float, str]] | None:
+    unit_pat = r"(?:pC|nC|uC|mC|C|coulombs?)"
+    direct = re.search(
+        rf"\bq\s*1\s*=\s*(?P<q1>{NUM})\s*(?P<u1>{unit_pat})\b.*?\bq\s*2\s*=\s*(?P<q2>{NUM})\s*(?P<u2>{unit_pat})?\b",
+        text,
+        flags=re.I | re.S,
+    )
+    if direct:
+        u1 = _unit(direct.group("u1"))
+        u2 = _unit(direct.group("u2") or u1)
+        return (_parse_number(direct.group("q1")), u1), (_parse_number(direct.group("q2")), u2)
+
+    ratio = re.search(rf"\bq\s*1\s*=\s*(?P<ratio>{NUM})\s*q\s*2\b", text, flags=re.I)
+    if ratio and "same sign" in low:
+        return (_parse_number(ratio.group("ratio")), "C"), (1.0, "C")
+    return None
+
+
+def _zero_field_separation(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>cm|mm|m)"
+    return _find_quantity(
+        [
+            rf"\bseparated\s+by(?:\s+a\s+distance\s+of)?\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\b(?:points\s+)?A\s+and\s+B\s+are\s*(?P<value>{NUM})\s*{unit}\s+apart\b",
+            rf"\b(?:points\s+)?A\s+and\s+B\b[^.]*?\b(?P<value>{NUM})\s*{unit}\s+apart\b",
+            rf"\bAB\s*=\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\bq\s*2\b[^.]*?\blocated\s+(?P<value>{NUM})\s*{unit}\s+from\s+the\s+origin\b",
+        ],
+        text,
+    )
+
+
+def _is_zero_field_distance_query(low: str) -> bool:
+    has_zero_field = "zero" in low and any(p in low for p in ["electric field", "field strength", "resultant electric field", "net electric field"])
+    asks_location = any(p in low for p in ["where", "find point", "calculate its distance", "calculate the distance", "coordinate"])
+    return has_zero_field and asks_location
+
+
+def _zero_field_reference(text: str, low: str) -> str:
+    if re.search(r"\bBM\b", text, flags=re.I) or "distance from b" in low:
+        return "B"
+    if "coordinate" in low or "ox axis" in low:
+        return "COORDINATE_FROM_A"
+    return "A"
+
+
+def _two_charge_zero_field_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if not _is_zero_field_distance_query(low):
+        return None
+    charges = _two_charge_values_for_zero_field(text, low)
+    separation = _zero_field_separation(text)
+    if charges is None or separation is None:
+        return None
+
+    q1, q2 = charges
+    reference = _zero_field_reference(text, low)
+    _, distance_unit = separation
+    return _schema(
+        "two_charge_zero_field_distance",
+        [
+            {"id": "q1", "type": "charge", "role": "given", **_quantity(*q1)},
+            {"id": "q2", "type": "charge", "role": "given", **_quantity(*q2)},
+            {"id": "d_ab", "type": "distance", "role": "given", **_quantity(*separation)},
+            {"id": "x_query", "type": "distance", "role": "query", "value": None, "unit": _unit(distance_unit), "reference": reference},
+        ],
+        constraints=["Model A and B on a 1D line and solve the point where the two electric-field magnitudes cancel."],
+    )
+
+
 def _schema(formula: str, objects: list[dict[str, Any]], constraints: list[str] | None = None) -> dict[str, Any]:
     return {
         "domain": "equations",
@@ -349,6 +419,10 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
     text = _norm(problem)
     low = text.lower()
     candidates: list[dict[str, Any]] = []
+
+    zero_field_candidate = _two_charge_zero_field_candidate(text, low)
+    if zero_field_candidate is not None:
+        candidates.append(zero_field_candidate)
 
     c = _capacitance(text)
     u = _voltage(text)
