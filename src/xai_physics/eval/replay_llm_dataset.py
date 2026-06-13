@@ -11,6 +11,7 @@ from typing import Any, Iterable
 
 from xai_physics.llm.replay_cache import ReplaySchemaLLM, load_replay_cache
 from xai_physics.llm.schema_pipeline import solve_problem_with_llm
+from xai_physics.symbolic import parse_symbolic_answer
 
 
 _SUPERSCRIPT_TRANS = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺", "0123456789-+")
@@ -211,6 +212,11 @@ def compare_answer(
     rel_tol: float = 5e-2,
     abs_tol: float = 1e-9,
 ) -> bool | None:
+    predicted_symbolic = parse_symbolic_answer(predicted)
+    expected_symbolic = parse_symbolic_answer(expected)
+    if predicted_symbolic is not None and expected_symbolic is not None:
+        return predicted_symbolic == expected_symbolic
+
     expected_num = _first_number(expected)
     predicted_num, predicted_unit = _predicted_number_and_unit(predicted)
     if expected_num is None or predicted_num is None:

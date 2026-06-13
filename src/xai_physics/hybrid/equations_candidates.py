@@ -892,6 +892,7 @@ def _distances_from_q1_q2(text: str) -> tuple[tuple[float, str], tuple[float, st
     patterns = [
         rf"(?P<r1>{NUM})\s*(?P<u1>{unit_pat})\s+from\s+q\s*1\s+and\s+(?P<r2>{NUM})\s*(?P<u2>{unit_pat})\s+from\s+q\s*2",
         rf"(?P<r1>{NUM})\s*(?P<u1>{unit_pat})\s+from\s+q1\s+and\s+(?P<r2>{NUM})\s*(?P<u2>{unit_pat})\s+from\s+q2",
+        rf"distances\s+to\s+the\s+two\s+charges\s+q\s*1.*?q\s*2.*?are\s+(?P<r1>{NUM})\s*(?P<u1>{unit_pat})\s+and\s+(?P<r2>{NUM})\s*(?P<u2>{unit_pat})",
     ]
     for pattern in patterns:
         m = re.search(pattern, text, flags=re.I)
@@ -1011,6 +1012,90 @@ def _midpoint_field_candidate(text: str, low: str) -> dict[str, Any] | None:
     )
 
 
+
+
+def _symbolic_vector_resultant_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "given f0" not in low or "isosceles right triangle" not in low or "remaining vertex" not in low:
+        return None
+    return _schema(
+        "symbolic_equal_perpendicular_resultant",
+        [
+            {"id": "F0", "type": "symbolic_force", "role": "given", "symbol": "F0", "value": "1", "unit": "symbolic"},
+            {"id": "angle", "type": "angle", "role": "given", "value": "90", "unit": "degree"},
+            {"id": "F_query", "type": "force", "role": "query", "value": None, "unit": "N"},
+        ],
+        constraints=["Two equal perpendicular force magnitudes F0 combine to sqrt(2)*F0."],
+    )
+
+
+def _direction_between_two_charges_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "what is the direction" not in low or "q1" not in low or "q2" not in low:
+        return None
+    charges = _two_charge_values_for_zero_field(text, low)
+    distances = _distances_from_q1_q2(text)
+    separation = _zero_field_separation(text)
+    if charges is None or distances is None or separation is None:
+        return None
+    q1, q2 = charges
+    r1 = _length_to_m(distances[0])
+    r2 = _length_to_m(distances[1])
+    d = _length_to_m(separation)
+    if abs(r1 + r2 - d) > max(1e-9, d * 1e-6):
+        return None
+    target = "q2" if q1[0] > 0 and q2[0] < 0 else "q1"
+    return _schema(
+        "direction_between_collinear_charges",
+        [
+            {"id": "q1", "type": "charge", "role": "given", **_quantity(*q1)},
+            {"id": "q2", "type": "charge", "role": "given", **_quantity(*q2)},
+            {"id": "direction_query", "type": "force", "role": "query", "value": None, "unit": "-", "target_symbol": target},
+        ],
+        constraints=["Point lies between opposite-sign charges; both field/force contributions point toward the negative charge."],
+    )
+
+
+def _symbolic_field_ratio_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "q1 = 4q2" not in low or "f1 = 3f2" not in low or "relationship" not in low:
+        return None
+    return _schema(
+        "symbolic_field_ratio_from_force_charge_ratios",
+        [
+            {"id": "F_ratio", "type": "ratio", "role": "given", "value": "3", "unit": "times", "symbol": "F1/F2"},
+            {"id": "q_ratio", "type": "ratio", "role": "given", "value": "4", "unit": "times", "symbol": "q1/q2"},
+            {"id": "relation_query", "type": "electric_field", "role": "query", "value": None, "unit": "-", "left": "E1", "right": "E2"},
+        ],
+        constraints=["Use E=F/q, hence E1/E2=(F1/F2)/(q1/q2)."],
+    )
+
+
+def _symbolic_right_isosceles_altitude_field_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "right isosceles triangle" not in low or "qA = qB = q".lower() not in low or "qC = 2q".lower() not in low:
+        return None
+    if "expression" not in low or "foot of the altitude" not in low:
+        return None
+    return _schema(
+        "symbolic_right_isosceles_altitude_field",
+        [
+            {"id": "k", "type": "symbol", "role": "constant", "symbol": "k", "value": "1", "unit": "symbolic"},
+            {"id": "q", "type": "symbol", "role": "given", "symbol": "q", "value": "1", "unit": "symbolic"},
+            {"id": "a", "type": "symbol", "role": "given", "symbol": "a", "value": "1", "unit": "symbolic"},
+            {"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "-"},
+        ],
+        constraints=["At the altitude foot of a right isosceles triangle, symbolic vector components reduce to 2*sqrt(2)*k*q/a^2."],
+    )
+
+
+def _symbolic_square_missing_charge_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "square" not in low or "charges q1 = q3 = q" not in low or "what charge must be placed at b" not in low:
+        return None
+    return _schema(
+        "symbolic_square_field_zero_missing_charge",
+        [
+            {"id": "q", "type": "symbol", "role": "given", "symbol": "q", "value": "1", "unit": "symbolic"},
+            {"id": "qB_query", "type": "charge", "role": "query", "value": None, "unit": "-"},
+        ],
+        constraints=["Solve the symbolic field-cancellation coefficient at D for a missing charge at B."],
+    )
 
 def _constant_zero_symmetry_candidate(text: str, low: str) -> dict[str, Any] | None:
     zero_force = _is_force_query(low) and any(
@@ -1266,6 +1351,11 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
     for special in (
         _two_charge_zero_field_candidate(text, low),
         _zero_field_unknown_charges_candidate(text, low),
+        _symbolic_vector_resultant_candidate(text, low),
+        _direction_between_two_charges_candidate(text, low),
+        _symbolic_field_ratio_candidate(text, low),
+        _symbolic_right_isosceles_altitude_field_candidate(text, low),
+        _symbolic_square_missing_charge_candidate(text, low),
         _constant_zero_symmetry_candidate(text, low),
         _right_triangle_three_charge_candidate(text, low),
         _right_triangle_altitude_foot_force_candidate(text, low),

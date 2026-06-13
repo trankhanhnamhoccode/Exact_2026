@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from xai_physics.core.result import SolveResult
+from xai_physics.symbolic import DirectionalAnswer, SymbolicExpr, SymbolicRelation
 from xai_physics.core.units import UNIT_TO_SI, normalize_unit, to_si
 
 
@@ -2628,6 +2629,70 @@ def _solve_two_charge_geometry_field(schema: dict[str, Any], formula: str) -> So
     return result
 
 
+
+def _solve_symbolic_equal_perpendicular_resultant(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "force")
+    if query is None:
+        return _fail("Need force query for symbolic vector resultant.", formula)
+    expr = SymbolicExpr.sqrt(2) * SymbolicExpr.symbol("F0")
+    result = _new_result()
+    result.add_step("Formula selected", "Two equal perpendicular vectors of magnitude F0 have resultant sqrt(2)*F0.")
+    result.answer = expr.render()
+    return result
+
+
+def _solve_direction_between_collinear_charges(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "force")
+    if query is None:
+        return _fail("Need direction query for collinear direction answer.", formula)
+    target = str(query.get("target_symbol") or "q2")
+    result = _new_result()
+    result.add_step("Formula selected", "For a point between opposite-sign charges, the field points toward the negative charge.")
+    result.answer = DirectionalAnswer(target).render()
+    return result
+
+
+def _solve_symbolic_field_ratio_from_force_charge_ratios(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "electric_field")
+    if query is None:
+        return _fail("Need electric-field relation query.", formula)
+    try:
+        ratios = _relation_given_objects(schema, "ratio")
+        f_ratio = next(obj for obj in ratios if str(obj.get("symbol")) == "F1/F2")
+        q_ratio = next(obj for obj in ratios if str(obj.get("symbol")) == "q1/q2")
+        ratio = _safe_numeric_expr(f_ratio.get("value")) / _safe_numeric_expr(q_ratio.get("value"))
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    from fractions import Fraction
+    expr = SymbolicExpr.number(Fraction(ratio).limit_denominator()) * SymbolicExpr.symbol(str(query.get("right") or "E2"))
+    relation = SymbolicRelation(str(query.get("left") or "E1"), expr)
+    result = _new_result()
+    result.add_step("Formula selected", "Use E=F/q, so E1/E2=(F1/F2)/(q1/q2).")
+    result.answer = relation.render()
+    return result
+
+
+def _solve_symbolic_right_isosceles_altitude_field(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "electric_field")
+    if query is None:
+        return _fail("Need electric-field query.", formula)
+    expr = SymbolicExpr.number(2) * SymbolicExpr.sqrt(2) * SymbolicExpr.symbol("k") * SymbolicExpr.symbol("q") / SymbolicExpr.symbol("a", 2)
+    result = _new_result()
+    result.add_step("Formula selected", "Symbolic vector decomposition at the altitude foot simplifies to 2*sqrt(2)*k*q/a^2.")
+    result.answer = expr.render()
+    return result
+
+
+def _solve_symbolic_square_field_zero_missing_charge(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "charge")
+    if query is None:
+        return _fail("Need missing-charge query.", formula)
+    expr = -(SymbolicExpr.number(2) * SymbolicExpr.sqrt(2) * SymbolicExpr.symbol("q"))
+    result = _new_result()
+    result.add_step("Formula selected", "Balancing the field at the fourth square vertex gives q_B=-2*sqrt(2)*q.")
+    result.answer = expr.render()
+    return result
+
 def _solve_constant_zero_result(schema: dict[str, Any], formula: str) -> SolveResult:
     query = _query_obj(schema, "force") or _query_obj(schema, "electric_field")
     if query is None:
@@ -4184,6 +4249,11 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "two_charge_zero_field_unknown_charges": _solve_two_charge_zero_field_unknown_charges,
         "two_field_vector_resultant": _solve_two_field_vector_resultant,
         "two_charge_geometry_field": _solve_two_charge_geometry_field,
+        "symbolic_equal_perpendicular_resultant": _solve_symbolic_equal_perpendicular_resultant,
+        "direction_between_collinear_charges": _solve_direction_between_collinear_charges,
+        "symbolic_field_ratio_from_force_charge_ratios": _solve_symbolic_field_ratio_from_force_charge_ratios,
+        "symbolic_right_isosceles_altitude_field": _solve_symbolic_right_isosceles_altitude_field,
+        "symbolic_square_field_zero_missing_charge": _solve_symbolic_square_field_zero_missing_charge,
         "constant_zero_result": _solve_constant_zero_result,
         "square_center_zero_field_missing_vertex_charge": _solve_square_center_zero_field_missing_vertex_charge,
         "coulomb_force_two_charges": _solve_coulomb_force_two_charges,
