@@ -10,7 +10,7 @@ _SUPERSCRIPT_TRANS = str.maketrans({
 })
 
 NUM = r"[-+]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:\s*(?:x|×|\*)\s*10\s*\^?\s*[-+]?\d+)?|10\s*\^?\s*[-+]?\d+)"
-UNIT = r"(?:rad/s|V/m|N/C|cm\^2|cm²|mm\^2|mm²|m\^2|m²|cm2|mm2|m2|kΩ|kohm|MΩ|Mohm|Ω|ohm|μF|µF|uF|mF|nF|pF|F|μC|µC|uC|mC|nC|pC|C|μH|µH|uH|mH|H|mA|A|kHz|Hz|ms|s|mJ|μJ|µJ|uJ|J|mW|W|cm|mm|m|V)"
+UNIT = r"(?:rad/s|V/m|N/C|cm\^2|cm²|mm\^2|mm²|m\^2|m²|cm2|mm2|m2|kΩ|kohm|MΩ|Mohm|Ω|ohm|μF|µF|uF|mF|nF|pF|F|μC|µC|uC|mC|nC|pC|C|μH|µH|uH|mH|H|mA|A|kHz|Hz|ms|s|mJ|μJ|µJ|uJ|J|mW|W|kg|g|cm|mm|m|°C|Celsius|V)"
 
 
 def _norm(text: str) -> str:
@@ -120,6 +120,79 @@ def _impedance(text: str) -> tuple[float, str] | None:
 
 
 
+
+def _voltage_any(text: str) -> tuple[float, str] | None:
+    found = _voltage(text)
+    if found is not None:
+        return found
+    for pattern in (
+        rf"(?:source|voltage source|battery|supply)\D{{0,20}}?({NUM})\s*(V)\b",
+        rf"({NUM})\s*(V)\b\s*(?:source|battery|supply)",
+        rf"\bU\s*=\s*({NUM})\s*(V)\b",
+    ):
+        found = _find(pattern, text)
+        if found is not None:
+            return found
+    return None
+
+
+def _current_any(text: str) -> tuple[float, str] | None:
+    found = _current(text)
+    if found is not None:
+        return found
+    for pattern in (
+        rf"(?:supplies|supply|delivers|total current|current)\D{{0,40}}?({NUM})\s*(mA|A)\b",
+        rf"\bI\s*=\s*({NUM})\s*(mA|A)\b",
+    ):
+        found = _find(pattern, text)
+        if found is not None:
+            return found
+    return None
+
+
+def _power_values(text: str) -> list[tuple[float, str]]:
+    out: list[tuple[float, str]] = []
+    for m in re.finditer(rf"({NUM})\s*(mW|W)\b", text, flags=re.I):
+        out.append((_parse_number(m.group(1)), _unit(m.group(2))))
+    return out
+
+
+def _lamp_count(low: str) -> int:
+    word_counts = {"two": 2, "three": 3, "four": 4, "five": 5}
+    for word, value in word_counts.items():
+        if re.search(rf"\b{word}\s+(?:identical\s+)?(?:lamps|bulbs|resistors|branches)\b", low):
+            return value
+    m = re.search(r"\b(\d+)\s+(?:identical\s+)?(?:lamps|bulbs|resistors|branches)\b", low)
+    if m:
+        return max(1, int(m.group(1)))
+    return 2
+
+
+def _equal_lamp_resistance(text: str) -> tuple[float, str] | None:
+    for pattern in (
+        rf"(?:each\s+(?:lamp|bulb|branch|resistor)\s+(?:has|has a|with)\s+(?:a\s+)?resistance\s*(?:R\s*)?(?:=|is|of)?\s*)({NUM})\s*(Ω|ohm|kohm|kΩ|Mohm|MΩ)\b",
+        rf"(?:resistance\s*(?:R\s*)?(?:=|is|of)?\s*)({NUM})\s*(Ω|ohm|kohm|kΩ|Mohm|MΩ)\b",
+    ):
+        found = _find(pattern, text)
+        if found is not None:
+            return found
+    return None
+
+
+def _measurement_uncertainty_pair(text: str) -> tuple[float, float, str] | None:
+    m = re.search(rf"({NUM})\s*(?:±|\+/-|\+-)\s*({NUM})\s*({UNIT})\b", text, flags=re.I)
+    if not m:
+        return None
+    return _parse_number(m.group(1)), _parse_number(m.group(2)), _unit(m.group(3))
+
+
+def _measurement_quantity_type(low: str) -> str:
+    for name in ("voltage", "current", "resistance", "temperature", "length", "mass", "time", "force", "power"):
+        if name in low:
+            return name
+    return "measured_value"
+
+
 def _frequency_any(text: str) -> tuple[float, str] | None:
     found = _frequency(text)
     if found is not None:
@@ -167,6 +240,59 @@ def _asks_impedance(low: str) -> bool:
 def extract_equations_schema_from_text(problem: str) -> dict[str, Any] | None:
     text = _norm(problem)
     low = text.lower()
+
+    # Deterministic measurement shortcut: "x = value ± uncertainty unit" -> percent relative error.
+    if ("relative error" in low or "relative uncertainty" in low or "percentage" in low or "percent" in low) and ("±" in text or "+/-" in text or "+-" in text):
+        pair = _measurement_uncertainty_pair(text)
+        if pair is not None:
+            value, uncertainty, unit = pair
+            qtype = _measurement_quantity_type(low)
+            objects = [
+                {"id": "measured1", "type": qtype if qtype != "measured_value" else "measured_value", "role": "given", "value": str(value), "unit": unit},
+                {"id": "err1", "type": f"{qtype}_uncertainty" if qtype != "measured_value" else "absolute_error", "role": "given", "value": str(uncertainty), "unit": unit},
+                {"id": "percent_query", "type": "percent_error", "role": "query", "value": None, "unit": "%"},
+            ]
+            return {"domain": "equations", "objects": objects, "relations": [{"type": "formula", "name": "percentage_relative_error", "objects": [obj["id"] for obj in objects]}], "constraints": []}
+
+    # Deterministic parallel lamp shortcut for branch currents + total current in one answer.
+    if ("parallel" in low and ("lamp" in low or "bulb" in low or "branch" in low)) and "current" in low:
+        u = _voltage_any(text)
+        r = _equal_lamp_resistance(text)
+        if u is not None and r is not None and ("each" in low or "total" in low):
+            n = _lamp_count(low)
+            objects: list[dict[str, Any]] = [
+                {"id": "U1", "type": "voltage", "role": "given", "value": str(u[0]), "unit": u[1]},
+            ]
+            for idx in range(1, n + 1):
+                objects.append({"id": f"R{idx}", "type": "resistance", "role": "given", "value": str(r[0]), "unit": r[1]})
+            for idx in range(1, n + 1):
+                objects.append({"id": f"I{idx}_query", "type": "current", "role": "query", "value": None, "unit": "A", "symbol": f"I{idx}"})
+            objects.append({"id": "Itotal_query", "type": "total_current", "role": "query", "value": None, "unit": "A"})
+            return {"domain": "equations", "objects": objects, "relations": [{"type": "formula", "name": "parallel_all_currents", "objects": [obj["id"] for obj in objects]}], "constraints": []}
+
+    # Direct total power P = UI when total source voltage and total current are stated.
+    if "power" in low and ("source" in low or "supplies" in low or "total" in low):
+        u = _voltage_any(text)
+        i = _current_any(text)
+        if u is not None and i is not None:
+            objects = [
+                {"id": "U1", "type": "voltage", "role": "given", "value": str(u[0]), "unit": u[1]},
+                {"id": "I1", "type": "current", "role": "given", "value": str(i[0]), "unit": i[1]},
+                {"id": "P_query", "type": "power", "role": "query", "value": None, "unit": "W"},
+            ]
+            return {"domain": "equations", "objects": objects, "relations": [{"type": "formula", "name": "power_voltage_current", "objects": [obj["id"] for obj in objects]}], "constraints": []}
+
+    # Total power from listed lamp powers: P_total = sum(P_i).
+    if "power" in low and "total" in low and ("lamp" in low or "bulb" in low):
+        powers = _power_values(text)
+        if len(powers) >= 2:
+            objects = [
+                {"id": f"P{idx}", "type": "power", "role": "given", "value": str(value), "unit": unit}
+                for idx, (value, unit) in enumerate(powers, 1)
+            ]
+            objects.append({"id": "Ptotal_query", "type": "total_power", "role": "query", "value": None, "unit": "W"})
+            return {"domain": "equations", "objects": objects, "relations": [{"type": "formula", "name": "total_power_sum", "objects": [obj["id"] for obj in objects]}], "constraints": []}
+
 
 
     # RLC resonance identity: at resonance, Z = R and cos(phi)=1.

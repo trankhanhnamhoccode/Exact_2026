@@ -2488,11 +2488,21 @@ def _measurement_uncertainty_obj(schema: dict[str, Any], quantity_prefixes: tupl
             wanted_types.add(f"delta_{prefix}")
 
     prefix_tokens = tuple(p.lower() for p in quantity_prefixes)
+    def _is_uncertainty_candidate(obj: dict[str, Any]) -> bool:
+        typ = str(obj.get("type", ""))
+        if typ in wanted_types | {"least_count"}:
+            return True
+        if typ.endswith("_uncertainty") or typ.startswith("delta_"):
+            return True
+        if typ.endswith("_error") and typ not in {"relative_error", "percent_error", "percentage_relative_error"}:
+            return True
+        return False
+
     candidates = [
         obj for obj in _iter_unique_objects(schema)
         if obj.get("role") in {"given", "constant"}
         and _has_value(obj)
-        and str(obj.get("type", "")) in wanted_types | {"least_count"}
+        and _is_uncertainty_candidate(obj)
     ]
 
     if quantity_prefixes:
@@ -3003,7 +3013,64 @@ def _parallel_branch_resistor(schema: dict[str, Any], query: dict[str, Any] | No
     return resistors[0]
 
 
+def _parallel_current_output_queries(schema: dict[str, Any]) -> list[dict[str, Any]]:
+    queries = [
+        obj for obj in _iter_unique_objects(schema)
+        if obj.get("role") == "query" and obj.get("type") in {"current", "branch_current", "total_current"}
+    ]
+    return queries
+
+
+def _solve_parallel_all_currents(schema: dict[str, Any], formula: str) -> SolveResult:
+    try:
+        u = _required_si(schema, "voltage", "V")
+        resistors = _parallel_known_resistors(schema)
+        if len(resistors) < 1:
+            return _fail("Need branch resistances for parallel currents.", formula)
+
+        branch_values: list[tuple[dict[str, Any], float]] = []
+        for obj in resistors:
+            r = _to_si_quantity(obj, "ohm")
+            if r == 0:
+                return _fail("Branch resistance must be non-zero.", formula)
+            branch_values.append((obj, u / r))
+        total = sum(value for _, value in branch_values)
+
+        queries = _parallel_current_output_queries(schema)
+        if not queries:
+            queries = [{"id": f"I{idx}_query", "type": "current", "role": "query", "unit": "A", "symbol": f"I{idx}"} for idx in range(1, len(branch_values)+1)]
+            queries.append({"id": "Itotal_query", "type": "total_current", "role": "query", "unit": "A"})
+
+        answers: list[str] = []
+        for query in queries:
+            qtype = str(query.get("type", ""))
+            if qtype == "total_current" or "total" in _id_symbol_text(query):
+                answers.append(_answer(total, query, "current", "A"))
+                continue
+            q_idx = _branch_index(query)
+            chosen = branch_values[0][1]
+            if q_idx is not None:
+                for resistor, value in branch_values:
+                    if _branch_index(resistor) == q_idx:
+                        chosen = value
+                        break
+            answers.append(_answer(chosen, query, "current", "A"))
+        if not answers:
+            return _fail("No current outputs could be produced.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "In parallel branches, every branch has source voltage: I_i=U/R_i and I_total=sum(I_i).")
+    result.answer = "; ".join(answers)
+    return result
+
+
 def _solve_parallel_branch_current(schema: dict[str, Any], formula: str) -> SolveResult:
+    current_queries = _parallel_current_output_queries(schema)
+    if len(current_queries) > 1 or any(obj.get("type") == "total_current" for obj in current_queries):
+        return _solve_parallel_all_currents(schema, "parallel_all_currents")
+
     query = _query_obj(schema, ("current", "branch_current"))
     if query is None:
         return _fail("Only branch-current query is supported for I_i = U/R_i in parallel.", formula)
@@ -3087,6 +3154,27 @@ def _solve_parallel_total_power(schema: dict[str, Any], formula: str) -> SolveRe
 
     result = _new_result()
     result.add_step("Formula selected", "In a parallel circuit, powers add: P_total = sum(U^2/R_i).")
+    result.answer = _answer(value, query, "power", "W")
+    return result
+
+
+def _solve_total_power_sum(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("total_power", "power")) or _query_obj(schema)
+    try:
+        powers = [
+            obj for obj in _iter_unique_objects(schema)
+            if obj.get("role") in {"given", "constant"}
+            and obj.get("type") in {"power", "branch_power"}
+            and _has_value(obj)
+        ]
+        if len(powers) < 2:
+            return _fail("Need at least two given powers to sum total power.", formula)
+        value = sum(_to_si_quantity(obj, "W") for obj in powers)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Total power of branches/lamps is the sum of their powers.")
     result.answer = _answer(value, query, "power", "W")
     return result
 
@@ -3358,6 +3446,8 @@ def _compatible_formula_names_from_objects(schema: dict[str, Any]) -> list[str]:
         add("parallel_resistance")
     if has_u and _count_given(schema, "resistance") >= 2:
         if _has_query_type(schema, ("total_current", "current")):
+            if _has_query_type(schema, "total_current") and _has_query_type(schema, "current"):
+                add("parallel_all_currents")
             add("parallel_total_current")
             add("parallel_branch_current")
         if _has_query_type(schema, ("total_power", "power")):
@@ -3369,12 +3459,15 @@ def _compatible_formula_names_from_objects(schema: dict[str, Any]) -> list[str]:
     if has_p and has_i:
         add("power_voltage_current")
         add("power_current_resistance")
+    if _count_given(schema, ("power", "branch_power")) >= 2 and _has_query_type(schema, ("total_power", "power")):
+        add("total_power_sum")
 
     # Measurement / error.
     measurement_types = {
         "absolute_error", "absolute_uncertainty", "uncertainty", "measurement_uncertainty", "least_count",
         "actual_value", "true_value", "measured_value", "voltage_error", "current_error", "measurement_error",
-        "voltage_uncertainty", "current_uncertainty", "random_error", "maximum_value",
+        "voltage_uncertainty", "current_uncertainty", "length_uncertainty", "temperature_uncertainty",
+        "resistance_uncertainty", "mass_uncertainty", "time_uncertainty", "random_error", "maximum_value",
     }
     if types & measurement_types or _has_query_type(schema, ("percent_error", "percentage_relative_error", "relative_error", "absolute_error")):
         if "least_count" in types and _has_query_type(schema, "absolute_error"):
@@ -3540,10 +3633,15 @@ def _canonical_formula(schema: dict[str, Any], formula: str) -> str:
         "power_uncertainty_product": "power_uncertainty_product",
         "power_error_from_voltage_current": "power_uncertainty_product",
         "parallel_resistance": "parallel_resistance",
+        "parallel_all_currents": "parallel_all_currents",
+        "parallel_current_all_outputs": "parallel_all_currents",
+        "parallel_branch_and_total_current": "parallel_all_currents",
         "parallel_branch_current": "parallel_branch_current",
         "parallel_lamp_current": "parallel_branch_current",
         "parallel_total_current": "parallel_total_current",
         "total_current_parallel": "parallel_total_current",
+        "total_power_sum": "total_power_sum",
+        "sum_branch_powers": "total_power_sum",
         "parallel_branch_power": "parallel_branch_power",
         "parallel_lamp_power": "parallel_branch_power",
         "parallel_total_power": "parallel_total_power",
@@ -3704,10 +3802,12 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "resonance_check": _solve_resonance_check,
         "frequency_scaling_for_resonance": _solve_frequency_scaling_for_resonance,
         "parallel_resistance": _solve_parallel_resistance,
+        "parallel_all_currents": _solve_parallel_all_currents,
         "parallel_branch_current": _solve_parallel_branch_current,
         "parallel_total_current": _solve_parallel_total_current,
         "parallel_branch_power": _solve_parallel_branch_power,
         "parallel_total_power": _solve_parallel_total_power,
+        "total_power_sum": _solve_total_power_sum,
         "instrument_absolute_error": _solve_instrument_absolute_error,
         "measurement_average": _solve_measurement_average,
         "random_error_half_range": _solve_random_error_half_range,

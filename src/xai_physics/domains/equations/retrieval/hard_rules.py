@@ -118,8 +118,10 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
     if "electric field" in text and "point charge" in text:
         add("point_charge_electric_field", 5.0)
 
-    if "relative error" in text or "percentage error" in text or "percentage relative" in text or "percent relative" in text:
+    if "relative error" in text or "percentage error" in text or "percentage relative" in text or "percent relative" in text or "relative uncertainty" in text:
         add("percentage_relative_error", 5.5)
+    if ("±" in text or "+/-" in text or "+-" in text) and ("relative" in text or "percentage" in text or "percent" in text):
+        add("percentage_relative_error", 7.5)
 
     if "maximum possible" in text or "maximum value" in text:
         add("measurement_maximum", 6.0)
@@ -234,6 +236,12 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
         )
         if ("inductor" in text or "ul" in text or "u_l" in text or "capacitor" in text or "uc" in text or "u_c" in text) and has_r_l_c:
             add("rlc_component_voltage_at_resonance", 9.0)
+
+    if "parallel" in text and ("lamp" in text or "bulb" in text or "branch" in text) and "current" in text and "each" in text and "total" in text:
+        add("parallel_all_currents", 9.0)
+
+    if "power" in text and "total" in text and ("lamp" in text or "bulb" in text) and re.search(r"\d\s*w", text) is not None:
+        add("total_power_sum", 8.0)
 
     if "power" in text and "voltage" in text and ("resistance" in text or "resistor" in text):
         add("power_voltage_resistance", 5.0)
