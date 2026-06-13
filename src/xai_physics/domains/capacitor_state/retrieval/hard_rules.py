@@ -47,6 +47,11 @@ HARD_RULES: list[tuple[str, str, str]] = [
         "Plate area changes.",
     ),
     (
+        "capacitance_scale",
+        r"\b(capacitance|capacity).{0,80}\b(doubled|tripled|quadrupled|halved|increased|decreased|scaled)\b",
+        "Capacitance changes by a stated factor.",
+    ),
+    (
         "short_circuit",
         r"\b(short[- ]?circuited|short circuit)\b",
         "Capacitor is short-circuited.",
@@ -125,6 +130,11 @@ DERIVED_RULES: list[tuple[str, set[str], str]] = [
         {"connected_source", "distance_scale"},
         "Connected source plus plate distance change implies voltage stays fixed.",
     ),
+    (
+        "source_capacitance_change",
+        {"connected_source", "capacitance_scale"},
+        "Connected source plus capacitance change implies voltage stays fixed.",
+    ),
 ]
 
 
@@ -170,6 +180,29 @@ def apply_hard_rules(problem: str) -> list[TagHit]:
                 evidence=evidence,
             )
             existing.add(tag)
+
+
+    if (
+        ("voltage" in text or "potential difference" in text)
+        and ("kept constant" in text or "kept fixed" in text or "constant voltage" in text)
+    ):
+        add(
+            tag="connected_source",
+            source="hard_rule",
+            score=1.05,
+            evidence="constant-voltage wording implies source-held voltage",
+        )
+
+    if (
+        ("work" in text or "supplied by the source" in text)
+        and ("source" in text or "battery" in text)
+    ):
+        add(
+            tag="source_work_query",
+            source="hard_rule",
+            score=1.10,
+            evidence="work supplied by source query",
+        )
 
     if (
         ("replace" in text or "replaced" in text)

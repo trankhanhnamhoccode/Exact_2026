@@ -21,6 +21,7 @@ SUPPORTED_EVENTS = {
     "ReplaceDielectric",
     "ReplaceCapacitor",
     "SetCapacitance",
+    "CapacitanceScale",
 }
 
 SUPPORTED_QUERIES = {
@@ -33,6 +34,9 @@ SUPPORTED_QUERIES = {
     "energy_percent",
     "energy_change",
     "energy_reduction",
+    "source_work",
+    "work_by_source",
+    "work",
 }
 
 
@@ -105,11 +109,18 @@ def _validate_entities(schema: dict[str, Any]) -> set[str]:
         _validate_quantity(ent.get("capacitance"), f"{path}.capacitance")
         _validate_quantity(ent.get("voltage"), f"{path}.voltage")
         _validate_quantity(ent.get("charge"), f"{path}.charge")
+        _validate_quantity(ent.get("area"), f"{path}.area")
+        _validate_quantity(ent.get("plate_area"), f"{path}.plate_area")
+        _validate_quantity(ent.get("distance"), f"{path}.distance")
+        _validate_quantity(ent.get("separation"), f"{path}.separation")
+        _validate_quantity(ent.get("plate_separation"), f"{path}.plate_separation")
 
         if (
             ent.get("capacitance") is None
             and ent.get("voltage") is None
             and ent.get("charge") is None
+            and ent.get("area") is None
+            and ent.get("plate_area") is None
         ):
             _err(f"{path} must contain at least one of capacitance, voltage, charge.")
 
@@ -189,6 +200,14 @@ def _validate_event(event: dict[str, Any], index: int, entity_ids: set[str]) -> 
         factor = params.get("factor")
         if not isinstance(factor, (int, float)) or factor <= 0:
             _err(f"{path}.params.factor must be a positive number.")
+
+    if event_type == "CapacitanceScale":
+        factor = params.get("factor")
+        if not isinstance(factor, (int, float)) or factor <= 0:
+            _err(f"{path}.params.factor must be a positive number.")
+        hold = params.get("hold") or params.get("hold_policy") or params.get("voltage_policy")
+        if hold is not None and not isinstance(hold, str):
+            _err(f"{path}.params.hold must be a string if provided.")
 
 
 def _validate_query(query: dict[str, Any], index: int, entity_ids: set[str]) -> None:

@@ -8,6 +8,7 @@ from xai_physics.domains.capacitor_state.state import CapacitorState
 from xai_physics.domains.capacitor_state.system import SystemState
 from xai_physics.domains.capacitor_state.events import (
     AreaScale,
+    CapacitanceScale,
     ConnectToSource,
     DisconnectFromSource,
     DistanceScale,
@@ -20,6 +21,9 @@ from xai_physics.domains.capacitor_state.events import (
 )
 from xai_physics.domains.capacitor_state.redistribution import ParallelRedistribution
 from xai_physics.domains.capacitor_state.contract import validate_schema
+
+
+EPS0 = 8.8541878128e-12
 
 
 def _quantity_to_si(data: Optional[dict[str, Any]]) -> Optional[float]:
@@ -35,6 +39,27 @@ def _quantity_to_si(data: Optional[dict[str, Any]]) -> Optional[float]:
     return to_si(float(value), str(unit))
 
 
+def _first_quantity_to_si(entity: dict[str, Any], keys: tuple[str, ...]) -> Optional[float]:
+    for key in keys:
+        value = _quantity_to_si(entity.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _infer_parallel_plate_capacitance(entity: dict[str, Any]) -> Optional[float]:
+    area = _first_quantity_to_si(entity, ("area", "plate_area"))
+    distance = _first_quantity_to_si(entity, ("distance", "separation", "plate_separation"))
+    if area is None or distance is None:
+        return None
+    if distance == 0:
+        raise ValueError("Plate separation must be non-zero.")
+    eps_r = entity.get("relative_permittivity", entity.get("dielectric_constant", entity.get("k", 1.0)))
+    if eps_r is None:
+        eps_r = 1.0
+    return EPS0 * float(eps_r) * area / distance
+
+
 def _build_system(schema: dict[str, Any]) -> SystemState:
     system = SystemState()
 
@@ -42,9 +67,13 @@ def _build_system(schema: dict[str, Any]) -> SystemState:
         if ent.get("type", "capacitor") != "capacitor":
             continue
 
+        capacitance = _quantity_to_si(ent.get("capacitance"))
+        if capacitance is None:
+            capacitance = _infer_parallel_plate_capacitance(ent)
+
         cap = CapacitorState(
             id=ent["id"],
-            capacitance_F=_quantity_to_si(ent.get("capacitance")),
+            capacitance_F=capacitance,
             voltage_V=_quantity_to_si(ent.get("voltage")),
             charge_C=_quantity_to_si(ent.get("charge")),
             connected_to_source=bool(ent.get("connected_to_source", False)),
@@ -125,6 +154,18 @@ def _apply_single_cap_event(event_schema: dict[str, Any], system: SystemState) -
             raise ValueError("AreaScale requires factor.")
         return AreaScale(factor=float(factor)).apply(cap)
 
+    if event_type == "CapacitanceScale":
+        factor = params.get("factor")
+        if factor is None:
+            raise ValueError("CapacitanceScale requires factor.")
+        hold = (
+            params.get("hold")
+            or params.get("hold_policy")
+            or params.get("voltage_policy")
+            or "auto"
+        )
+        return CapacitanceScale(factor=float(factor), hold_policy=str(hold)).apply(cap)
+
     if event_type == "ShortCircuit":
         return ShortCircuit().apply(cap)
 
@@ -161,7 +202,35 @@ def _format_value(value_si: float, si_unit: str, output_unit: Optional[str]) -> 
     return f"{value:g} {output_unit}"
 
 
+def _source_work_of_target(initial_system: SystemState, final_system: SystemState, target: str) -> float:
+    initial_system.infer_all()
+    final_system.infer_all()
+
+    if target == "system":
+        cap_ids = list(final_system.capacitors.keys())
+    else:
+        cap_ids = [target]
+
+    work = 0.0
+    for cap_id in cap_ids:
+        initial = initial_system.get(cap_id)
+        final = final_system.get(cap_id)
+        initial.infer_missing()
+        final.infer_missing()
+        if initial.charge_C is None or final.charge_C is None or final.voltage_V is None:
+            raise ValueError(f"Cannot compute source work for capacitor {cap_id}; missing Q or V.")
+        work += final.voltage_V * (final.charge_C - initial.charge_C)
+    return work
+
+
 def _answer_query(query: dict[str, Any], system: SystemState, initial_system: SystemState | None = None) -> str:
+    if query.get("type") in {"source_work", "work_by_source", "work"}:
+        if initial_system is None:
+            raise ValueError("source_work query requires initial_system snapshot.")
+        target = query.get("target", "system")
+        value_si = _source_work_of_target(initial_system, system, target)
+        return _format_value(value_si, "J", query.get("unit"))
+
     if query.get("type") == "energy_percent":
         if initial_system is None:
             raise ValueError("energy_percent query requires initial_system snapshot.")
