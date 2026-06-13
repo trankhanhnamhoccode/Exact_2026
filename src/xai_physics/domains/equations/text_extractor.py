@@ -27,9 +27,13 @@ def _parse_number(raw: str) -> float:
     m = re.fullmatch(r"([-+]?(?:\d+(?:\.\d*)?|\.\d+))x10\^?([-+]?\d+)", s, flags=re.I)
     if m:
         return float(m.group(1)) * (10.0 ** int(m.group(2)))
-    m = re.fullmatch(r"([-+]?)10\^?([-+]?\d+)", s, flags=re.I)
+    # Only treat bare 10 as scientific notation when there is an explicit
+    # exponent marker/sign.  Without this guard, ordinary values like 100 Hz
+    # were parsed as 10^0 = 1.
+    m = re.fullmatch(r"([-+]?)10(?:\^([-+]?\d+)|([-+]\d+))", s, flags=re.I)
     if m:
-        return (-1.0 if m.group(1) == "-" else 1.0) * (10.0 ** int(m.group(2)))
+        exponent = m.group(2) if m.group(2) is not None else m.group(3)
+        return (-1.0 if m.group(1) == "-" else 1.0) * (10.0 ** int(exponent))
     return float(s)
 
 
@@ -115,9 +119,103 @@ def _impedance(text: str) -> tuple[float, str] | None:
 
 
 
+
+def _frequency_any(text: str) -> tuple[float, str] | None:
+    found = _frequency(text)
+    if found is not None:
+        return found
+    for pattern in (
+        rf"(?:resonate|resonates|resonance|resonant|at)\D{{0,40}}?({NUM})\s*(kHz|Hz)\b",
+        rf"({NUM})\s*(kHz|Hz)\b\D{{0,40}}?(?:resonate|resonance|resonant)",
+    ):
+        found = _find(pattern, text)
+        if found is not None:
+            return found
+    return None
+
+
+def _capacitance_any(text: str) -> tuple[float, str] | None:
+    found = _capacitance(text)
+    if found is not None:
+        return found
+    return _find(rf"({NUM})\s*(pF|nF|uF|μF|µF|mF|F)\s*(?:capacitor|capacitance)", text)
+
+
+def _inductance_any(text: str) -> tuple[float, str] | None:
+    found = _inductance(text)
+    if found is not None:
+        return found
+    return _find(rf"({NUM})\s*(uH|μH|µH|mH|H)\s*(?:inductor|inductance)", text)
+
+
+def _asks_capacitance(low: str) -> bool:
+    return "what capacitance" in low or "capacitance c" in low or "capacitor value" in low or "what value of c" in low or "what c" in low
+
+
+def _asks_inductance(low: str) -> bool:
+    return "what inductance" in low or "inductance l" in low or "what inductor" in low or "what l" in low or "inductor l" in low or "l is required" in low or "l is needed" in low
+
+
+def _asks_resistance(low: str) -> bool:
+    return "resistance" in low or "pure resistance" in low or re.search(r"\bcalculate\s+r\b|\bdetermine\s+r\b|\bwhat\s+is\s+r\b", low) is not None
+
+
+def _asks_impedance(low: str) -> bool:
+    return "impedance" in low or re.search(r"\bwhat\s+is\s+z\b|\bcalculate\s+z\b", low) is not None
+
+
 def extract_equations_schema_from_text(problem: str) -> dict[str, Any] | None:
     text = _norm(problem)
     low = text.lower()
+
+
+    # RLC resonance identity: at resonance, Z = R and cos(phi)=1.
+    if "reson" in low or "z = r" in low or "z=r" in low or "φ = 0" in low or "phi = 0" in low:
+        if "power factor" in low or "cosφ" in low or "cos phi" in low or "cosphi" in low or "cos(phi" in low:
+            objects = [{"id": "cos_phi_query", "type": "power_factor", "role": "query", "value": None, "unit": ""}]
+            return {"domain": "equations", "objects": objects, "relations": [{"type": "formula", "name": "power_factor_at_resonance", "objects": ["cos_phi_query"]}], "constraints": ["At resonance, phi=0 so cos(phi)=1."]}
+
+        z = _impedance(text)
+        r = _resistance(text)
+        if z is not None and _asks_resistance(low):
+            objects = [
+                {"id": "Z1", "type": "impedance", "role": "given", "value": str(z[0]), "unit": z[1]},
+                {"id": "R_query", "type": "resistance", "role": "query", "value": None, "unit": "ohm"},
+            ]
+            return {"domain": "equations", "objects": objects, "relations": [{"type": "formula", "name": "rlc_resonance_impedance_resistance", "objects": [obj["id"] for obj in objects]}], "constraints": ["At resonance, Z=R."]}
+        if r is not None and _asks_impedance(low):
+            objects = [
+                {"id": "R1", "type": "resistance", "role": "given", "value": str(r[0]), "unit": r[1]},
+                {"id": "Z_query", "type": "impedance", "role": "query", "value": None, "unit": "ohm"},
+            ]
+            return {"domain": "equations", "objects": objects, "relations": [{"type": "formula", "name": "rlc_resonance_impedance_resistance", "objects": [obj["id"] for obj in objects]}], "constraints": ["At resonance, Z=R."]}
+
+    # LC/RLC inverse resonance from text, avoiding LLM schemas that lose f=... as f_query=null.
+    if "reson" in low or "f0" in low or "natural frequency" in low:
+        l = _inductance_any(text)
+        c = _capacitance_any(text)
+        f = _frequency_any(text)
+        if l is not None and f is not None and _asks_capacitance(low):
+            objects = [
+                {"id": "L1", "type": "inductance", "role": "given", "value": str(l[0]), "unit": l[1]},
+                {"id": "f1", "type": "frequency", "role": "given", "value": str(f[0]), "unit": f[1]},
+                {"id": "C_query", "type": "capacitance", "role": "query", "value": None, "unit": "uF"},
+            ]
+            return {"domain": "equations", "objects": objects, "relations": [{"type": "formula", "name": "lc_resonance_frequency", "objects": [obj["id"] for obj in objects]}], "constraints": []}
+        if c is not None and f is not None and _asks_inductance(low):
+            objects = [
+                {"id": "C1", "type": "capacitance", "role": "given", "value": str(c[0]), "unit": c[1]},
+                {"id": "f1", "type": "frequency", "role": "given", "value": str(f[0]), "unit": f[1]},
+                {"id": "L_query", "type": "inductance", "role": "query", "value": None, "unit": "H"},
+            ]
+            return {"domain": "equations", "objects": objects, "relations": [{"type": "formula", "name": "lc_resonance_frequency", "objects": [obj["id"] for obj in objects]}], "constraints": []}
+        if l is not None and c is not None and ("calculate f0" in low or "calculate f_0" in low or "frequency" in low):
+            objects = [
+                {"id": "L1", "type": "inductance", "role": "given", "value": str(l[0]), "unit": l[1]},
+                {"id": "C1", "type": "capacitance", "role": "given", "value": str(c[0]), "unit": c[1]},
+                {"id": "f_query", "type": "frequency", "role": "query", "value": None, "unit": "Hz"},
+            ]
+            return {"domain": "equations", "objects": objects, "relations": [{"type": "formula", "name": "lc_resonance_frequency", "objects": [obj["id"] for obj in objects]}], "constraints": []}
 
     # Inductor scalar energy: W = 1/2*L*I^2, with inverse forms.
     if ("inductor" in low or "coil" in low) and ("magnetic" in low or "energy" in low):

@@ -18,13 +18,14 @@ def detect_tags(problem: str) -> list[TagHit]:
         ("capacitor", 1.0, r"\bcapacitor|capacitance\b"),
         ("energy", 1.0, r"\benergy|stored energy\b"),
         ("voltage", 1.0, r"\bvoltage|potential difference|\bU\s*=|\bV\b"),
+        ("constant_voltage", 1.2, r"constant voltage|unchanged voltage|fixed voltage"),
         ("charge", 1.0, r"\bcharge|\bQ\s*="),
         ("parallel_plate", 1.2, r"parallel[- ]plate|plate area|plate separation"),
         ("series", 1.2, r"\bseries\b"),
         ("lc", 1.2, r"\bLC\b|oscillat|tank circuit"),
-        ("resonance", 1.5, r"resonan|natural frequency"),
-        ("frequency", 1.0, r"\bfrequency|\bf\s*="),
-        ("ohm", 1.3, r"\bohm|resistance|resistor|\bR\s*="),
+        ("resonance", 1.5, r"resonan|natural frequency|at resonance|Z\s*=\s*R|cos\s*φ|cos\s*phi"),
+        ("frequency", 1.0, r"\bfrequency|\bf\s*=|\bf0\b|omega|ω"),
+        ("ohm", 1.3, r"\bohm|Ω|resistance|resistor|impedance|\bR\s*=|\bZ\s*="),
         ("current", 1.0, r"\bcurrent|\bI\s*="),
         ("rlc", 1.2, r"\bRLC\b|quality factor|Q factor"),
         ("solenoid", 1.8, r"\bsolenoid\b"),
@@ -186,6 +187,18 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
 
     if ("power consumed" in text or "power dissipated" in text or "power consumed" in text) and "impedance" in text and "resistance" in text and ("voltage" in text or "source voltage" in text or "total voltage" in text):
         add("rlc_power_voltage_impedance_resistance", 6.0)
+
+    if ("reson" in text or "z = r" in text or "z=r" in text or "φ = 0" in text or "phi = 0" in text) and ("impedance" in text or " z" in f" {text}" or "resistance" in text):
+        add("rlc_resonance_impedance_resistance", 9.0)
+
+    if ("reson" in text or "φ = 0" in text or "phi = 0" in text) and ("power factor" in text or "cosφ" in text or "cos phi" in text or "cosphi" in text):
+        add("power_factor_at_resonance", 9.0)
+
+    if ("by what factor" in text or "what factor" in text or "what multiple" in text or "multiple of" in text or "multiplied" in text) and ("xl" in text or "x_l" in text or "inductive reactance" in text) and ("xc" in text or "x_c" in text or "capacitive reactance" in text):
+        add("frequency_scaling_for_resonance", 9.0)
+
+    if ("resonate" in text or "resonance" in text or "resonant" in text) and ("capacitance" in text or "inductance" in text or re.search(r"\bf\s*=", text)):
+        add("lc_resonance_frequency", 7.5)
 
     if "power factor" in text or "cosφ" in text or "cos phi" in text or "cosphi" in text:
         add("power_factor", 6.0)

@@ -761,6 +761,58 @@ FORMULA_DOCS: list[FormulaDoc] = [
         ),
     ),
     FormulaDoc(
+        id="rlc_resonance_impedance_resistance",
+        name="RLC resonance impedance equals resistance",
+        equation="at resonance: Z = R",
+        description="Use for series RLC resonance questions where total impedance equals pure resistance, including solving R from measured Z or Z from R.",
+        quantity_types=["impedance", "resistance"],
+        query_types=["impedance", "resistance"],
+        tags=["ac", "rlc", "resonance", "impedance", "resistance"],
+        keywords=["at resonance Z equals R", "measured impedance at resonance", "pure resistance R", "total impedance at resonance", "Z=R"],
+        schema_template=_schema(
+            "rlc_resonance_impedance_resistance",
+            [
+                {"id": "Z1", "type": "impedance", "role": "given", "value": "<number>", "unit": "ohm"},
+                {"id": "R_query", "type": "resistance", "role": "query", "value": None, "unit": "ohm"},
+            ],
+        ),
+    ),
+    FormulaDoc(
+        id="power_factor_at_resonance",
+        name="Power factor at resonance",
+        equation="phi=0 => cos(phi)=1",
+        description="Use for power factor/cosφ questions at series RLC resonance.",
+        quantity_types=["power_factor", "phase"],
+        query_types=["power_factor", "ratio"],
+        tags=["ac", "rlc", "resonance", "power_factor", "phase"],
+        keywords=["power factor at resonance", "cos phi at resonance", "cosφ", "phi equals zero", "Z=R"],
+        schema_template=_schema(
+            "power_factor_at_resonance",
+            [
+                {"id": "cos_phi_query", "type": "power_factor", "role": "query", "value": None, "unit": ""},
+            ],
+        ),
+    ),
+    FormulaDoc(
+        id="frequency_scaling_for_resonance",
+        name="Frequency scaling factor for RLC resonance",
+        equation="k = sqrt(XC/XL)",
+        description="Use when XL and XC are known at omega0 and the question asks what multiple/factor of omega0 gives resonance.",
+        quantity_types=["inductive_reactance", "capacitive_reactance", "frequency_factor", "angular_frequency"],
+        query_types=["frequency_factor", "ratio", "angular_frequency", "frequency"],
+        tags=["ac", "rlc", "resonance", "frequency_scaling", "reactance"],
+        keywords=["by what factor", "what multiple of omega0", "multiplied for resonance", "XL XC", "reactance at omega0"],
+        schema_template=_schema(
+            "frequency_scaling_for_resonance",
+            [
+                {"id": "XL1", "type": "inductive_reactance", "role": "given", "value": "<number>", "unit": "ohm"},
+                {"id": "XC1", "type": "capacitive_reactance", "role": "given", "value": "<number>", "unit": "ohm"},
+                {"id": "k_query", "type": "frequency_factor", "role": "query", "value": None, "unit": ""},
+            ],
+        ),
+    ),
+
+    FormulaDoc(
         id="resonance_check",
         name="LC/RLC resonance yes-no check",
         equation="compare f with f0 = 1/(2*pi*sqrt(LC))",

@@ -1751,6 +1751,74 @@ def _solve_ac_capacitive_reactance(schema: dict[str, Any], formula: str) -> Solv
     return result
 
 
+
+def _query_is_power_factorish(schema: dict[str, Any]) -> bool:
+    q = _query_obj(schema, ("power_factor", "ratio", "phase")) or _query_obj(schema)
+    if q is None:
+        return False
+    blob = _id_symbol_text(q)
+    return q.get("type") in {"power_factor", "phase", "ratio"} and any(
+        tok in blob for tok in ("cos", "phi", "cosphi", "power_factor", "power factor")
+    )
+
+
+def _has_resonance_candidate(schema: dict[str, Any]) -> bool:
+    blobs: list[str] = []
+    for rel in _relations(schema):
+        blobs.extend(str(rel.get(k, "")) for k in ("name", "formula", "formula_id", "type", "relation"))
+    for item in schema.get("formula_candidates", []) or []:
+        if isinstance(item, str):
+            blobs.append(item)
+        elif isinstance(item, dict):
+            blobs.extend(str(item.get(k, "")) for k in ("id", "formula_id", "name", "formula"))
+    for c in schema.get("constraints", []) or []:
+        blobs.append(str(c))
+    text = " ".join(blobs).lower()
+    return "reson" in text or "z = r" in text or "z=r" in text
+
+
+def _solve_rlc_resonance_impedance_resistance(schema: dict[str, Any], formula: str) -> SolveResult:
+    """At series RLC resonance, total impedance is purely resistive: Z = R.
+
+    This intentionally handles common imperfect schemas from small LLMs:
+    - Z given as type="impedance", R query;
+    - R given, Z query;
+    - measured resonance impedance accidentally typed as resistance plus R query.
+    """
+    r_query = _query_obj(schema, "resistance")
+    z_query = _query_obj(schema, "impedance")
+
+    try:
+        if r_query is not None:
+            z_obj = _given_obj(schema, "impedance")
+            if z_obj is not None:
+                value = _to_si_quantity(z_obj, "ohm")
+            else:
+                # Some schemas type "impedance measured at resonance" as resistance.
+                given_rs = [
+                    obj for obj in _iter_unique_objects(schema)
+                    if _type_matches(obj, "resistance") and obj.get("role") in {"given", "constant"} and _has_value(obj)
+                ]
+                if not given_rs:
+                    raise ValueError("Need a given impedance Z or resistance-equivalent value at resonance.")
+                value = _to_si_quantity(given_rs[0], "ohm")
+            query = r_query
+            qtype = "resistance"
+        elif z_query is not None:
+            r = _required_si(schema, "resistance", "ohm")
+            value = r
+            query = z_query
+            qtype = "impedance"
+        else:
+            return _fail("Need either resistance query or impedance query for Z=R at resonance.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "At resonance in a series RLC circuit, XL=XC so total impedance equals pure resistance: Z=R.")
+    result.answer = _answer(value, query, qtype, "ohm")
+    return result
+
 def _solve_rlc_power_voltage_impedance_resistance(schema: dict[str, Any], formula: str) -> SolveResult:
     p_query = _query_obj(schema, "power")
     if p_query is None:
@@ -3024,10 +3092,10 @@ def _solve_parallel_total_power(schema: dict[str, Any], formula: str) -> SolveRe
 
 
 def _solve_power_factor_at_resonance(schema: dict[str, Any], formula: str) -> SolveResult:
-    query = _query_obj(schema, ("power_factor", "ratio")) or _query_obj(schema)
+    query = _query_obj(schema, ("power_factor", "ratio", "phase")) or _query_obj(schema)
     result = _new_result()
-    result.add_step("Formula selected", "At resonance in a series RLC circuit, impedance is purely resistive, so cos(phi)=1.")
-    result.answer = _answer(1.0, query, "power_factor", "")
+    result.add_step("Formula selected", "At resonance in a series RLC circuit, phase angle phi=0, so cos(phi)=1.")
+    result.answer = "1"
     return result
 
 
@@ -3239,6 +3307,12 @@ def _compatible_formula_names_from_objects(schema: dict[str, Any]) -> list[str]:
         add("capacitor_energy_charge_scaling_constant_capacitance")
 
     # RLC / LC.
+    if (has_z and has_r) and _has_query_type(schema, ("impedance", "resistance")) and not (has_xl and has_xc):
+        add("rlc_resonance_impedance_resistance")
+    if (_has_query_type(schema, ("power_factor", "phase")) or _query_is_power_factorish(schema)) and _has_resonance_candidate(schema):
+        add("power_factor_at_resonance")
+    if has_xl and has_xc and _has_query_type(schema, ("frequency_factor", "angular_frequency_factor", "ratio", "angular_frequency", "frequency")):
+        add("frequency_scaling_for_resonance")
     if has_l and (has_f or has_omega or _has_query_type(schema, "inductive_reactance")):
         add("ac_inductive_reactance")
     if has_c and (has_f or has_omega or _has_query_type(schema, "capacitive_reactance")):
@@ -3493,6 +3567,10 @@ def _canonical_formula(schema: dict[str, Any], formula: str) -> str:
         "rlc_power_voltage_impedance_resistance": "rlc_power_voltage_impedance_resistance",
         "power_rlc_series": "rlc_power_voltage_impedance_resistance",
         "real_power_rlc": "rlc_power_voltage_impedance_resistance",
+        "rlc_resonance_impedance_resistance": "rlc_resonance_impedance_resistance",
+        "resonant_impedance_equals_resistance": "rlc_resonance_impedance_resistance",
+        "impedance_equals_resistance_at_resonance": "rlc_resonance_impedance_resistance",
+        "z_equals_r_at_resonance": "rlc_resonance_impedance_resistance",
         "rlc_frequency_scaled_response": "rlc_frequency_scaled_response",
         "rlc_response_after_frequency_change": "rlc_frequency_scaled_response",
         "rlc_resistor_voltage_after_frequency_change": "rlc_frequency_scaled_response",
@@ -3508,6 +3586,28 @@ def _canonical_formula(schema: dict[str, Any], formula: str) -> str:
         "circuit_characteristic_from_reactance": "rlc_characteristic_from_reactance",
     }
     key = aliases.get(key, key)
+
+    # Resonance identity repairs for schemas where the LLM selected ac_impedance/ohm_law but only Z/R is available.
+    if key in {"ac_impedance", "ohm_law", "impedance_voltage_current", "rlc_power_voltage_impedance_resistance", "resonance_check"}:
+        has_reactance_info = _given_obj(schema, "inductive_reactance") is not None or _given_obj(schema, "capacitive_reactance") is not None
+        has_lc_frequency_info = (_given_obj(schema, "inductance") is not None and _given_obj(schema, "capacitance") is not None and (_given_obj(schema, "frequency") is not None or _given_obj(schema, "angular_frequency") is not None))
+        if not has_reactance_info and not has_lc_frequency_info:
+            if (_query_obj(schema, "resistance") is not None and (_given_obj(schema, "impedance") is not None or _given_obj(schema, "resistance") is not None)) or (
+                _query_obj(schema, "impedance") is not None and _given_obj(schema, "resistance") is not None
+            ):
+                if _has_resonance_candidate(schema) or key in {"ac_impedance", "resonance_check"}:
+                    return "rlc_resonance_impedance_resistance"
+
+    # Power factor / cos(phi) questions at resonance are dimensionless and need no numeric R,L,C.
+    if key in {"resonance_check", "rlc_power_voltage_impedance_resistance", "power_factor", "phase", "cos_phi"}:
+        if _query_is_power_factorish(schema) and _has_resonance_candidate(schema):
+            return "power_factor_at_resonance"
+
+    # Reactance pair + asked multiple/factor of omega0 => k=sqrt(XC/XL), not a circuit characteristic.
+    if key in {"resonance_check", "rlc_frequency_scaled_response", "rlc_characteristic_from_reactance", "ac_inductive_reactance", "ac_capacitive_reactance"}:
+        if _given_obj(schema, "inductive_reactance") is not None and _given_obj(schema, "capacitive_reactance") is not None:
+            if _has_query_type(schema, ("frequency_factor", "angular_frequency_factor", "ratio", "angular_frequency", "frequency")):
+                return "frequency_scaling_for_resonance"
 
     # If the LLM picked frequency formula but the query is angular frequency/period, route accordingly.
     if key == "lc_resonance_frequency" and _query_obj(schema, "angular_frequency") is not None:
@@ -3594,6 +3694,7 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "ac_capacitive_reactance": _solve_ac_capacitive_reactance,
         "ac_impedance": _solve_ac_impedance,
         "rlc_power_voltage_impedance_resistance": _solve_rlc_power_voltage_impedance_resistance,
+        "rlc_resonance_impedance_resistance": _solve_rlc_resonance_impedance_resistance,
         "rlc_frequency_scaled_response": _solve_rlc_frequency_scaled_response,
         "rlc_component_voltage_at_resonance": _solve_rlc_component_voltage_at_resonance,
         "rlc_characteristic_from_reactance": _solve_rlc_characteristic_from_reactance,
