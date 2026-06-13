@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import copy
 import math
 from typing import Any
 
@@ -487,6 +488,18 @@ def _solve_capacitor_charge_voltage(schema: dict[str, Any], formula: str) -> Sol
 
 def _solve_capacitor_energy_voltage(schema: dict[str, Any], formula: str) -> SolveResult:
     w_query = _query_obj(schema, "energy")
+
+    # Repair common LLM mistake: phrases like "electric field energy of the capacitor"
+    # mean stored energy W, not energy density u. If C and U are present and the
+    # only query is energy_density, reuse that query as an energy query.
+    if w_query is None and _given_obj(schema, "capacitance") is not None and _given_obj(schema, "voltage") is not None:
+        mislabeled = _query_obj(schema, "energy_density")
+        if mislabeled is not None:
+            mislabeled["type"] = "energy"
+            if str(mislabeled.get("unit", "")).strip() in {"", "J/m3", "J/m^3", "J/m³"}:
+                mislabeled["unit"] = "uJ"
+            w_query = mislabeled
+
     c_query = _query_obj(schema, "capacitance")
     u_query = _query_obj(schema, "voltage")
 
@@ -2068,6 +2081,240 @@ def _solve_measurement_average(schema: dict[str, Any], formula: str) -> SolveRes
     return result
 
 
+
+# ---------------------------------------------------------------------------
+# Formula portfolio fallback
+# ---------------------------------------------------------------------------
+# The LLM is useful for extracting quantities, but it is not reliable enough to
+# be the final authority on the formula.  In eval logs it often selects a nearby
+# formula (for example energy_density for "electric field energy") even though
+# the extracted objects are sufficient for a different formula.  The portfolio
+# fallback below tries formulas in a conservative order:
+#   1. formulas explicitly emitted by the LLM schema relations,
+#   2. formulas retrieved for the prompt and attached as schema["formula_candidates"],
+#   3. formulas inferred from object/query types.
+# A formula is accepted only if its registered handler returns an actual answer.
+
+def _formula_names_from_relations(schema: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    for rel in _relations(schema):
+        if not isinstance(rel, dict):
+            continue
+        for key in ("name", "formula", "formula_id", "relation", "type"):
+            value = rel.get(key)
+            if isinstance(value, str) and value.strip() and value != "formula":
+                names.append(value.strip())
+                break
+    return names
+
+
+def _formula_names_from_schema_candidates(schema: dict[str, Any]) -> list[str]:
+    raw = schema.get("formula_candidates") or schema.get("retrieved_formulas") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+
+    names: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            names.append(item)
+        elif isinstance(item, dict):
+            for key in ("id", "formula_id", "name", "formula"):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    names.append(value.strip())
+                    break
+    return names
+
+
+def _object_type_set(schema: dict[str, Any]) -> set[str]:
+    return {str(obj.get("type")) for obj in _objects(schema) if obj.get("type")}
+
+
+def _has_query_type(schema: dict[str, Any], obj_type: str | tuple[str, ...]) -> bool:
+    return _query_obj(schema, obj_type) is not None
+
+
+def _count_given(schema: dict[str, Any], obj_type: str | tuple[str, ...]) -> int:
+    return sum(
+        1
+        for obj in _iter_unique_objects(schema)
+        if _type_matches(obj, obj_type)
+        and obj.get("role") in {"given", "constant"}
+        and _has_value(obj)
+    )
+
+
+def _compatible_formula_names_from_objects(schema: dict[str, Any]) -> list[str]:
+    types = _object_type_set(schema)
+    names: list[str] = []
+
+    def add(name: str) -> None:
+        if name not in names:
+            names.append(name)
+
+    has_c = "capacitance" in types
+    has_u = "voltage" in types
+    has_q = "charge" in types
+    has_w = "energy" in types or "energy_density" in types
+    has_d = "distance" in types or "length" in types
+    has_area = "area" in types or "radius" in types
+    has_i = "current" in types
+    has_r = "resistance" in types
+    has_p = "power" in types
+    has_l = "inductance" in types
+    has_f = "frequency" in types
+    has_omega = "angular_frequency" in types
+
+    # Capacitor core relations.
+    if has_c and has_u:
+        if has_w or _has_query_type(schema, ("energy", "energy_density")):
+            add("capacitor_energy_voltage")
+        add("capacitor_charge_voltage")
+    if has_q and has_u:
+        if has_w or _has_query_type(schema, "energy"):
+            add("capacitor_energy_charge_voltage")
+        add("capacitor_charge_voltage")
+    if has_q and has_c:
+        add("capacitor_charge_voltage")
+
+    # Parallel-plate capacitor / field / density.
+    if has_area and has_d:
+        add("parallel_plate_capacitance")
+        if has_u:
+            add("parallel_plate_charge_from_voltage")
+    if has_u and has_d:
+        add("parallel_plate_field")
+        if _has_query_type(schema, "energy_density"):
+            add("capacitor_energy_density")
+    if "electric_field" in types and has_area:
+        add("parallel_plate_charge_from_field")
+
+    # Simple scaling forms.
+    if has_c and "ratio" in types:
+        add("parallel_plate_capacitance_distance_scaling")
+        add("capacitor_energy_voltage_scaling_constant_capacitance")
+        add("capacitor_energy_scaling_constant_voltage")
+        add("capacitor_energy_charge_scaling_constant_capacitance")
+
+    # RLC / LC.
+    if has_l and has_c and (has_f or has_omega or _has_query_type(schema, ("frequency", "angular_frequency", "capacitance", "inductance"))):
+        add("lc_resonance_frequency")
+        add("lc_resonance_angular_frequency")
+    if has_l and has_i and ("energy" in types or _has_query_type(schema, "energy")):
+        add("inductor_energy")
+
+    # Basic circuit formulas.
+    if has_u and has_i:
+        add("ohm_law")
+        add("power_voltage_current")
+    if has_u and has_r:
+        add("ohm_law")
+        add("power_voltage_resistance")
+    if has_i and has_r:
+        add("ohm_law")
+        add("power_current_resistance")
+    if _count_given(schema, "resistance") >= 2 and _has_query_type(schema, ("resistance", "equivalent_resistance")):
+        add("parallel_resistance")
+    if has_p and has_u:
+        add("power_voltage_current")
+        add("power_voltage_resistance")
+    if has_p and has_i:
+        add("power_voltage_current")
+        add("power_current_resistance")
+
+    # Measurement / error.
+    if "least_count" in types and _has_query_type(schema, "absolute_error"):
+        add("instrument_absolute_error")
+    if _count_given(schema, ("measured_value", "length", "mass", "voltage", "current", "temperature", "volume")) >= 2:
+        add("measurement_average")
+
+    # Solenoid / magnetic formulas.
+    if "turn_count" in types or "turn_density" in types:
+        add("solenoid_turn_density")
+        if "magnetic_field" in types and "current" in types:
+            add("solenoid_magnetic_field")
+        if "area" in types:
+            add("solenoid_inductance")
+
+    return names
+
+
+def _candidate_formula_names(schema: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+
+    def add(name: str | None) -> None:
+        if not name:
+            return
+        canonical = _canonical_formula(schema, name)
+        if canonical and canonical not in out:
+            out.append(canonical)
+
+    for name in _formula_names_from_relations(schema):
+        add(name)
+    for name in _formula_names_from_schema_candidates(schema):
+        add(name)
+    for name in _compatible_formula_names_from_objects(schema):
+        add(name)
+
+    if not out:
+        add(_formula_id(schema))
+
+    return out
+
+
+def _with_forced_formula(schema: dict[str, Any], formula: str) -> dict[str, Any]:
+    trial = copy.deepcopy(schema)
+    obj_ids = [obj.get("id") for obj in _objects(trial) if obj.get("id")]
+
+    relations = trial.get("relations")
+    if not isinstance(relations, list) or not relations:
+        trial["relations"] = [{"type": "formula", "name": formula, "objects": obj_ids}]
+        return trial
+
+    first_formula_found = False
+    for rel in relations:
+        if not isinstance(rel, dict):
+            continue
+        if rel.get("type") == "formula" or rel.get("name") or rel.get("formula"):
+            rel["type"] = "formula"
+            rel["name"] = formula
+            # For fallback candidates, let the handler inspect all objects instead
+            # of being restricted by a possibly bad LLM relation object list.
+            rel["objects"] = obj_ids
+            first_formula_found = True
+            break
+
+    if not first_formula_found:
+        relations.insert(0, {"type": "formula", "name": formula, "objects": obj_ids})
+
+    return trial
+
+
+def _is_successful_result(result: SolveResult) -> bool:
+    return result.status in {"ok", "solved"} and result.answer is not None
+
+
+def _annotate_portfolio_result(
+    result: SolveResult,
+    *,
+    selected_formula: str,
+    original_formulas: list[str],
+    tried: list[str],
+    errors: list[dict[str, str]],
+) -> SolveResult:
+    fallback_used = selected_formula not in {_canonical_formula({}, f) for f in original_formulas}
+    result.add_step(
+        "Formula portfolio selected",
+        f"Selected {selected_formula} after trying {len(tried)} candidate(s).",
+        selected_formula=selected_formula,
+        fallback_used=fallback_used,
+        tried_formulas=tried,
+        formula_errors=errors[-8:],
+    )
+    return result
+
 def _canonical_formula(schema: dict[str, Any], formula: str) -> str:
     raw = (formula or "").strip()
     key = raw.lower()
@@ -2119,9 +2366,15 @@ def _canonical_formula(schema: dict[str, Any], formula: str) -> str:
             return "resonance_check"
 
     # Energy of capacitor with C and U sometimes gets mislabeled as energy_density.
+    # "electric field energy" is stored energy W, while "energy density" is u.
     if key == "capacitor_energy_density":
-        if _given_obj(schema, "capacitance") is not None and _given_obj(schema, "voltage") is not None and _query_obj(schema, "energy") is not None:
-            return "capacitor_energy_voltage"
+        if _given_obj(schema, "capacitance") is not None and _given_obj(schema, "voltage") is not None:
+            if _query_obj(schema, "energy") is not None or _query_obj(schema, "energy_density") is not None:
+                # If there is no distance/electric-field given, density is impossible; route to W=1/2CU^2.
+                if _given_obj(schema, ("distance", "length")) is None and _given_obj(schema, "electric_field") is None:
+                    return "capacitor_energy_voltage"
+                if _query_obj(schema, "energy") is not None:
+                    return "capacitor_energy_voltage"
 
     # If final query is energy and Q + U are given, prefer direct W = 1/2 Q U even if the LLM emitted an intermediate C_query.
     if _query_obj(schema, "energy") is not None and _given_obj(schema, "charge") is not None and _given_obj(schema, "voltage") is not None:
@@ -2199,17 +2452,83 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "lc_magnetic_energy_time": _solve_lc_magnetic_energy_time,
     }
 
-    handler = handlers.get(formula)
-    if handler is None:
+    candidates = _candidate_formula_names(schema)
+    if formula and formula not in candidates:
+        candidates.insert(0, formula)
+
+    original_formulas = _formula_names_from_relations(schema)
+    tried: list[str] = []
+    errors: list[dict[str, str]] = []
+    unsupported: list[str] = []
+
+    for candidate in candidates:
+        candidate = _canonical_formula(schema, candidate)
+        if not candidate or candidate in tried:
+            continue
+        tried.append(candidate)
+
+        handler = handlers.get(candidate)
+        if handler is None:
+            unsupported.append(candidate)
+            errors.append(
+                {
+                    "formula": candidate,
+                    "status": "unsupported",
+                    "error": f"No equations handler is registered for formula '{candidate}'.",
+                }
+            )
+            continue
+
+        trial = _with_forced_formula(schema, candidate)
+        try:
+            result = handler(trial, candidate)
+        except Exception as exc:  # defensive: handlers should return solve_failed, not raise
+            errors.append(
+                {
+                    "formula": candidate,
+                    "status": "exception",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            continue
+
+        if _is_successful_result(result):
+            return _annotate_portfolio_result(
+                result,
+                selected_formula=candidate,
+                original_formulas=original_formulas,
+                tried=tried,
+                errors=errors,
+            )
+
+        errors.append(
+            {
+                "formula": candidate,
+                "status": result.status,
+                "error": str(result.error or "no answer"),
+            }
+        )
+
+    if unsupported and len(unsupported) == len(tried):
         result = _new_result("unsupported")
-        result.error = f"Unsupported equation formula: {formula or '<missing>'}"
+        result.error = f"Unsupported equation formula: {unsupported[0] or '<missing>'}"
         result.add_step(
             "Equation unsupported",
-            f"No equations handler is registered for formula '{formula or '<missing>'}'.",
+            f"No equations handler is registered for formula '{unsupported[0] or '<missing>'}'.",
+            tried_formulas=tried,
+            formula_errors=errors,
         )
         return result
 
-    return handler(schema, formula)
+    result = _new_result("solve_failed")
+    result.error = "No formula candidate solved successfully."
+    result.add_step(
+        "Formula portfolio failed",
+        "All equation formula candidates failed or were unsupported.",
+        tried_formulas=tried,
+        formula_errors=errors,
+    )
+    return result
 
 
 def solve(question: str) -> SolveResult:

@@ -12,6 +12,51 @@ from xai_physics.domains.electrostatics.text_extractor import extract_electrosta
 from xai_physics.domains.equations.text_extractor import extract_equations_schema_from_text
 
 
+
+
+def _attach_formula_candidates(schema: dict[str, Any], prompt_result: PromptBuildResult) -> None:
+    """Attach retrieval-ranked equations formulas for solver portfolio fallback.
+
+    The prompt already shows these formula docs to the LLM, but the exact solver
+    should also receive them explicitly so it can try nearby formulas when the
+    LLM picked the wrong relation name.
+    """
+    if prompt_result.domain_decision.domain != "equations":
+        return
+
+    candidates: list[str] = []
+
+    for formula in prompt_result.formulas:
+        for key in ("id", "formula_id", "name", "formula"):
+            value = formula.get(key)
+            if isinstance(value, str) and value.strip():
+                if value.strip() not in candidates:
+                    candidates.append(value.strip())
+                break
+
+    for value in prompt_result.retrieval_debug.get("selected_formula_ids", []):
+        if isinstance(value, str) and value.strip() and value.strip() not in candidates:
+            candidates.append(value.strip())
+
+    if not candidates:
+        return
+
+    existing = schema.get("formula_candidates")
+    if isinstance(existing, str):
+        existing_values = [existing]
+    elif isinstance(existing, list):
+        existing_values = [x for x in existing if isinstance(x, str)]
+    else:
+        existing_values = []
+
+    merged: list[str] = []
+    for value in existing_values + candidates:
+        if value not in merged:
+            merged.append(value)
+
+    schema["formula_candidates"] = merged
+
+
 @dataclass(frozen=True)
 class SchemaPipelineResult:
     solve_result: SolveResult
@@ -49,6 +94,7 @@ def solve_problem_with_llm(
         schema = extract_json_object(raw_output)
     except ValueError as exc:
         if deterministic_schema is not None:
+            _attach_formula_candidates(deterministic_schema, prompt_result)
             result = solve_schema(deterministic_schema)
             result.add_step("Prompt built", f"Domain: {prompt_result.domain_decision.domain}")
             result.add_step(
@@ -83,6 +129,7 @@ def solve_problem_with_llm(
     if deterministic_schema is not None:
         schema = deterministic_schema
 
+    _attach_formula_candidates(schema, prompt_result)
     result = solve_schema(schema)
     result.add_step("Prompt built", f"Domain: {prompt_result.domain_decision.domain}")
     if deterministic_schema is not None:

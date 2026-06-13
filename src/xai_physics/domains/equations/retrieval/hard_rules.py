@@ -113,6 +113,11 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
     if "energy density" in text and ("capacitor" in text or "electric field" in text or "between plates" in text):
         add("capacitor_energy_density", 5.0)
 
+    # Important wording trap: many textbook translations say "electric field energy"
+    # for the stored energy of a capacitor, not energy density.
+    if "electric field energy" in text and "capacitor" in text and "energy density" not in text:
+        add("capacitor_energy_voltage", 6.0)
+
     if "constant voltage" in text and "energy" in text and ("capacitance" in text or "capacitor" in text):
         add("capacitor_energy_scaling_constant_voltage", 5.0)
 
