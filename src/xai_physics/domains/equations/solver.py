@@ -1866,6 +1866,201 @@ def _solve_frequency_scaling_for_resonance(schema: dict[str, Any], formula: str)
     return result
 
 
+def _frequency_scale_factor(schema: dict[str, Any]) -> float:
+    """Return frequency/angular-frequency scale factor k from schema objects.
+
+    Dataset wording often says frequency is doubled/tripled/quadrupled, while the
+    schema may encode this as frequency_factor or as a generic ratio. Prefer
+    objects whose id/symbol mentions frequency/omega/k, but fall back to the only
+    available ratio-like object.
+    """
+    ratio_types = {"frequency_factor", "angular_frequency_factor", "scale_factor", "scaling_factor", "ratio"}
+    candidates: list[dict[str, Any]] = []
+    preferred: list[dict[str, Any]] = []
+
+    for obj in _iter_unique_objects(schema):
+        if obj.get("type") not in ratio_types or obj.get("role") not in {"given", "constant"} or not _has_value(obj):
+            continue
+        candidates.append(obj)
+        blob = _id_symbol_text(obj)
+        if obj.get("type") in {"frequency_factor", "angular_frequency_factor"} or any(
+            key in blob for key in ["frequency", "omega", "angular", "k", "f2/f1", "w2/w1"]
+        ):
+            preferred.append(obj)
+
+    obj = preferred[0] if preferred else (candidates[0] if len(candidates) == 1 else None)
+    if obj is None:
+        raise ValueError("Missing frequency scale factor k.")
+    value = _safe_numeric_expr(_raw_value(obj))
+    if value <= 0:
+        raise ValueError("Frequency scale factor must be positive.")
+    return value
+
+
+def _scaled_reactances_from_schema(schema: dict[str, Any]) -> tuple[float, float, float]:
+    xl0 = _required_si(schema, "inductive_reactance", "ohm")
+    xc0 = _required_si(schema, "capacitive_reactance", "ohm")
+    k = _frequency_scale_factor(schema)
+    return k * xl0, xc0 / k, k
+
+
+def _voltage_query_for_rlc_component(schema: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    """Return voltage query and kind: resistor, inductor, capacitor, or generic."""
+    for obj in _iter_unique_objects(schema):
+        if obj.get("role") not in {"query", "unknown"} or _has_value(obj):
+            continue
+        typ = str(obj.get("type", ""))
+        blob = _id_symbol_text(obj)
+        if typ in {"resistor_voltage", "voltage_resistor"} or any(k in blob for k in ["ur", "u_r", "resistor", "across_r"]):
+            return obj, "resistor"
+        if typ in {"inductor_voltage", "voltage_inductor"} or any(k in blob for k in ["ul", "u_l", "inductor", "across_l"]):
+            return obj, "inductor"
+        if typ in {"capacitor_voltage", "voltage_capacitor"} or any(k in blob for k in ["uc", "u_c", "capacitor", "across_c"]):
+            return obj, "capacitor"
+
+    q = _query_obj(schema, ("resistor_voltage", "inductor_voltage", "capacitor_voltage", "voltage"))
+    if q is None:
+        return None, "generic"
+    typ = str(q.get("type", ""))
+    blob = _id_symbol_text(q)
+    if typ == "resistor_voltage" or any(k in blob for k in ["ur", "u_r", "resistor", "across_r"]):
+        return q, "resistor"
+    if typ == "inductor_voltage" or any(k in blob for k in ["ul", "u_l", "inductor", "across_l"]):
+        return q, "inductor"
+    if typ == "capacitor_voltage" or any(k in blob for k in ["uc", "u_c", "capacitor", "across_c"]):
+        return q, "capacitor"
+    return q, "generic"
+
+
+def _schema_relation_names(schema: dict[str, Any]) -> set[str]:
+    return {str(rel.get("name", "")).lower() for rel in _relations(schema)}
+
+
+def _solve_rlc_frequency_scaled_response(schema: dict[str, Any], formula: str) -> SolveResult:
+    """Solve series RLC after frequency is scaled.
+
+    XL' = k XL and XC' = XC/k. Then Z' = sqrt(R^2 + (XL'-XC')^2),
+    I' = U/Z', UR' = I'R, and P' = I'^2 R. If R is not supplied but the
+    new reactances cancel, the resistor voltage equals the source voltage.
+    """
+    i_query = _query_obj(schema, "current")
+    p_query = _query_obj(schema, "power")
+    z_query = _query_obj(schema, "impedance")
+    u_query, voltage_kind = _voltage_query_for_rlc_component(schema)
+
+    names = _schema_relation_names(schema) | {str(formula).lower()}
+    if voltage_kind == "generic":
+        if any("resistor" in name or "across_r" in name or "voltage_across_r" in name for name in names):
+            voltage_kind = "resistor"
+        elif any("inductor" in name or "across_l" in name or "voltage_across_l" in name for name in names):
+            voltage_kind = "inductor"
+        elif any("capacitor" in name or "across_c" in name or "voltage_across_c" in name for name in names):
+            voltage_kind = "capacitor"
+
+    try:
+        xl, xc, k = _scaled_reactances_from_schema(schema)
+        diff = xl - xc
+        resonance_tol = max(1e-9, 1e-6 * max(abs(xl), abs(xc), 1.0))
+        is_resonant_after_scale = abs(diff) <= resonance_tol
+
+        u = _required_si(schema, "voltage", "V")
+        r_obj = _given_obj(schema, "resistance")
+        r = _to_si_quantity(r_obj, "ohm") if r_obj is not None else None
+
+        if u_query is not None and voltage_kind == "resistor" and r is None and is_resonant_after_scale:
+            value = u
+            query = u_query
+            quantity_type = "voltage"
+            default_unit = "V"
+        else:
+            if r is None:
+                raise ValueError("Missing resistance R for current/power/component voltage after frequency scaling.")
+            z = math.sqrt(r * r + diff * diff)
+            if z == 0:
+                return _fail("Impedance must be non-zero after frequency scaling.", formula)
+            current = u / z
+
+            if i_query is not None:
+                value = current
+                query = i_query
+                quantity_type = "current"
+                default_unit = "A"
+            elif p_query is not None:
+                value = current * current * r
+                query = p_query
+                quantity_type = "power"
+                default_unit = "W"
+            elif z_query is not None:
+                value = z
+                query = z_query
+                quantity_type = "impedance"
+                default_unit = "ohm"
+            elif u_query is not None:
+                query = u_query
+                quantity_type = "voltage"
+                default_unit = "V"
+                if voltage_kind == "inductor":
+                    value = current * xl
+                elif voltage_kind == "capacitor":
+                    value = current * xc
+                else:
+                    value = current * r
+            else:
+                return _fail("No supported query for frequency-scaled RLC response.", formula)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step(
+        "Formula selected",
+        "After frequency scaling by k, use XL'=k*XL, XC'=XC/k, Z'=sqrt(R^2+(XL'-XC')^2), then derive I, UR, UL/UC, or P.",
+    )
+    result.answer = _answer(value, query, quantity_type, default_unit)
+    return result
+
+
+def _solve_rlc_component_voltage_at_resonance(schema: dict[str, Any], formula: str) -> SolveResult:
+    query, kind = _voltage_query_for_rlc_component(schema)
+    if query is None:
+        return _fail("Only component voltage query is supported at resonance.", formula)
+
+    names = _schema_relation_names(schema) | {str(formula).lower()}
+    if kind == "generic":
+        if any("capacitor" in name or "uc" in name or "across_c" in name for name in names):
+            kind = "capacitor"
+        else:
+            # Dataset CH365+ asks UL with generic voltage extraction often; default to inductor.
+            kind = "inductor"
+
+    try:
+        u = _required_si(schema, "voltage", "V")
+        r = _required_si(schema, "resistance", "ohm")
+        l = _required_si(schema, "inductance", "H")
+        c = _required_si(schema, "capacitance", "F")
+        if r == 0 or l <= 0 or c <= 0:
+            return _fail("R must be non-zero and L,C must be positive.", formula)
+        current = u / r
+        omega0 = 1.0 / math.sqrt(l * c)
+        xl = omega0 * l
+        xc = 1.0 / (omega0 * c)
+        if kind == "capacitor":
+            value = current * xc
+        elif kind == "resistor":
+            value = u
+        else:
+            value = current * xl
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step(
+        "Formula selected",
+        "At resonance, I=U/R and XL=XC=sqrt(L/C); component voltage is U_L=I*XL or U_C=I*XC.",
+    )
+    result.answer = _answer(value, query, "voltage", "V")
+    return result
+
+
 MU0 = 4 * math.pi * 1e-7
 
 
@@ -2920,6 +3115,12 @@ def _compatible_formula_names_from_objects(schema: dict[str, Any]) -> list[str]:
         add("rlc_power_voltage_impedance_resistance")
     if (has_xl and has_xc) and _has_query_type(schema, ("circuit_characteristic", "characteristic", "text", "string")):
         add("rlc_characteristic_from_reactance")
+    if has_xl and has_xc and ("frequency_factor" in types or "angular_frequency_factor" in types or "ratio" in types):
+        add("frequency_scaling_for_resonance")
+        if has_u and (_has_query_type(schema, ("current", "power", "impedance", "voltage", "resistor_voltage", "inductor_voltage", "capacitor_voltage"))):
+            add("rlc_frequency_scaled_response")
+    if has_l and has_c and has_r and has_u and _has_query_type(schema, ("voltage", "inductor_voltage", "capacitor_voltage", "resistor_voltage")):
+        add("rlc_component_voltage_at_resonance")
     if has_l and has_c and (has_f or has_omega or _has_query_type(schema, ("frequency", "angular_frequency", "period", "time", "capacitance", "inductance"))):
         add("lc_resonance_frequency")
         add("lc_resonance_angular_frequency")
@@ -3141,6 +3342,17 @@ def _canonical_formula(schema: dict[str, Any], formula: str) -> str:
         "rlc_power_voltage_impedance_resistance": "rlc_power_voltage_impedance_resistance",
         "power_rlc_series": "rlc_power_voltage_impedance_resistance",
         "real_power_rlc": "rlc_power_voltage_impedance_resistance",
+        "rlc_frequency_scaled_response": "rlc_frequency_scaled_response",
+        "rlc_response_after_frequency_change": "rlc_frequency_scaled_response",
+        "rlc_resistor_voltage_after_frequency_change": "rlc_frequency_scaled_response",
+        "rlc_current_after_frequency_change": "rlc_frequency_scaled_response",
+        "rlc_power_after_frequency_change": "rlc_frequency_scaled_response",
+        "voltage_across_r_after_frequency_change": "rlc_frequency_scaled_response",
+        "rlc_component_voltage_at_resonance": "rlc_component_voltage_at_resonance",
+        "rlc_inductor_voltage_at_resonance": "rlc_component_voltage_at_resonance",
+        "rlc_capacitor_voltage_at_resonance": "rlc_component_voltage_at_resonance",
+        "voltage_across_l_at_resonance": "rlc_component_voltage_at_resonance",
+        "voltage_across_c_at_resonance": "rlc_component_voltage_at_resonance",
         "rlc_characteristic": "rlc_characteristic_from_reactance",
         "circuit_characteristic_from_reactance": "rlc_characteristic_from_reactance",
     }
@@ -3231,6 +3443,8 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "ac_capacitive_reactance": _solve_ac_capacitive_reactance,
         "ac_impedance": _solve_ac_impedance,
         "rlc_power_voltage_impedance_resistance": _solve_rlc_power_voltage_impedance_resistance,
+        "rlc_frequency_scaled_response": _solve_rlc_frequency_scaled_response,
+        "rlc_component_voltage_at_resonance": _solve_rlc_component_voltage_at_resonance,
         "rlc_characteristic_from_reactance": _solve_rlc_characteristic_from_reactance,
         "power_factor": _solve_power_factor,
         "power_factor_at_resonance": _solve_power_factor_at_resonance,

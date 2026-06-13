@@ -799,6 +799,48 @@ FORMULA_DOCS: list[FormulaDoc] = [
     ),
 
     FormulaDoc(
+        id="rlc_frequency_scaled_response",
+        name="Series RLC response after frequency scaling",
+        equation="XL'=k XL, XC'=XC/k, Z'=sqrt(R^2+(XL'-XC')^2)",
+        description="Use when only the supply frequency is multiplied by a factor and the question asks the new RMS current, resistor voltage, component voltage, impedance, or power.",
+        quantity_types=["inductive_reactance", "capacitive_reactance", "frequency_factor", "voltage", "resistance", "current", "power"],
+        query_types=["current", "power", "impedance", "voltage", "resistor_voltage", "inductor_voltage", "capacitor_voltage"],
+        tags=["ac", "rlc", "frequency_change", "reactance", "current", "power", "voltage"],
+        keywords=["frequency is doubled", "frequency is tripled", "frequency is increased", "what is RMS current", "voltage across R", "power dissipated by R", "only frequency changes"],
+        schema_template=_schema(
+            "rlc_frequency_scaled_response",
+            [
+                {"id": "XL1", "type": "inductive_reactance", "role": "given", "value": "<number>", "unit": "ohm"},
+                {"id": "XC1", "type": "capacitive_reactance", "role": "given", "value": "<number>", "unit": "ohm"},
+                {"id": "k1", "type": "frequency_factor", "role": "given", "value": "<number>", "unit": ""},
+                {"id": "U1", "type": "voltage", "role": "given", "value": "<number>", "unit": "V"},
+                {"id": "R1", "type": "resistance", "role": "given", "value": "<number>", "unit": "ohm"},
+                {"id": "I_query", "type": "current", "role": "query", "value": None, "unit": "A"},
+            ],
+        ),
+    ),
+    FormulaDoc(
+        id="rlc_component_voltage_at_resonance",
+        name="RLC component voltage at resonance",
+        equation="I=U/R, XL=XC=sqrt(L/C), UL=I*XL",
+        description="Use at resonance to compute voltage across the inductor or capacitor from source voltage, resistance, inductance, and capacitance.",
+        quantity_types=["voltage", "inductor_voltage", "capacitor_voltage", "resistance", "inductance", "capacitance"],
+        query_types=["voltage", "inductor_voltage", "capacitor_voltage"],
+        tags=["ac", "rlc", "resonance", "component_voltage", "inductor_voltage", "capacitor_voltage"],
+        keywords=["voltage across the inductor", "UL", "voltage across L", "voltage across the capacitor", "UC", "at resonance"],
+        schema_template=_schema(
+            "rlc_component_voltage_at_resonance",
+            [
+                {"id": "U1", "type": "voltage", "role": "given", "value": "<number>", "unit": "V"},
+                {"id": "R1", "type": "resistance", "role": "given", "value": "<number>", "unit": "ohm"},
+                {"id": "L1", "type": "inductance", "role": "given", "value": "<number>", "unit": "H"},
+                {"id": "C1", "type": "capacitance", "role": "given", "value": "<number>", "unit": "uF"},
+                {"id": "UL_query", "type": "inductor_voltage", "role": "query", "value": None, "unit": "V", "symbol": "UL"},
+            ],
+        ),
+    ),
+
+    FormulaDoc(
         id="lc_natural_period",
         name="LC natural period",
         equation="T = 2*pi*sqrt(L*C)",

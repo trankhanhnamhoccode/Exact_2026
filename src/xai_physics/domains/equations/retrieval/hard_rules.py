@@ -191,6 +191,35 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
     if ("characteristic" in text or "exhibit" in text) and ("z_l" in text or "z_c" in text or "xl" in text or "xc" in text or "reactance" in text):
         add("rlc_characteristic_from_reactance", 6.0)
 
+    has_frequency_scale_change = (
+        "frequency is doubled" in text
+        or "frequency is tripled" in text
+        or "frequency is quadrupled" in text
+        or "frequency is increased" in text
+        or "frequency is multiplied" in text
+        or "only the frequency" in text
+        or re.search(r"frequency.{0,30}(?:doubled|tripled|quadrupled|increased by|factor)", text) is not None
+    )
+    has_reactance_pair = any(tok in text for tok in ["xl", "x_l", "z_l", "inductive reactance"]) and any(tok in text for tok in ["xc", "x_c", "z_c", "capacitive reactance"])
+    if has_frequency_scale_change and has_reactance_pair and ("rlc" in text or "series" in text or "circuit" in text):
+        if any(phrase in text for phrase in ["voltage across r", "voltage across the resistor", "across resistor", "rms voltage across r", "rms voltage across the resistor"]):
+            add("rlc_frequency_scaled_response", 8.0)
+        if any(phrase in text for phrase in ["rms current", "effective current", "current in the circuit"]):
+            add("rlc_frequency_scaled_response", 8.0)
+        if any(phrase in text for phrase in ["power consumed", "power dissipated", "power across r", "power dissipated by r", "power consumed by the resistor"]):
+            add("rlc_frequency_scaled_response", 8.0)
+        # Even if the wording is terse, this family is almost always the same response calculation.
+        add("rlc_frequency_scaled_response", 6.5)
+
+    if ("resonance" in text or "at resonance" in text) and ("voltage across" in text or "ul" in text or "u_l" in text or "uc" in text or "u_c" in text):
+        has_r_l_c = (
+            ("resistance" in text or re.search(r"\br\s*=", text) is not None)
+            and ("inductance" in text or re.search(r"\bl\s*=", text) is not None)
+            and ("capacitance" in text or re.search(r"\bc\s*=", text) is not None)
+        )
+        if ("inductor" in text or "ul" in text or "u_l" in text or "capacitor" in text or "uc" in text or "u_c" in text) and has_r_l_c:
+            add("rlc_component_voltage_at_resonance", 9.0)
+
     if "power" in text and "voltage" in text and ("resistance" in text or "resistor" in text):
         add("power_voltage_resistance", 5.0)
 
