@@ -110,3 +110,63 @@ def test_replay_compare_answer_handles_units_and_dirty_scientific_notation():
 def test_compare_answer_handles_bare_power_of_ten_expected():
     assert compare_answer("9986.16865811 V/m", "10^4", expected_unit="V/m") is True
     assert compare_answer("1e-11 C", "10^{-11}", expected_unit="C") is True
+
+
+def test_replay_dataset_runner_reports_trusted_accuracy_with_quality_flags(tmp_path):
+    from xai_physics.llm.replay_cache import ReplayCacheEntry
+    from xai_physics.eval.replay_llm_dataset import load_quality_flags
+
+    entries = parse_eval_log(TD009_LOG)
+    bad_gold_entry = ReplayCacheEntry(
+        case_id="TD009_BAD_GOLD",
+        question=entries[0].question,
+        schema=entries[0].schema,
+        raw_output=entries[0].raw_output,
+        row=110,
+        metadata={},
+    )
+    cache_path = tmp_path / "cache.jsonl"
+    write_replay_cache([entries[0], bad_gold_entry], cache_path)
+
+    dataset_path = tmp_path / "dataset.csv"
+    with dataset_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["id", "question", "answer", "unit"])
+        writer.writeheader()
+        writer.writerow({"id": "TD009", "question": entries[0].question, "answer": "3", "unit": "nC"})
+        writer.writerow(
+            {
+                "id": "TD009_BAD_GOLD",
+                "question": entries[0].question,
+                "answer": "999",
+                "unit": "nC",
+            }
+        )
+
+    flags_path = tmp_path / "quality_flags.jsonl"
+    flags_path.write_text(
+        json.dumps(
+            {
+                "case_id": "TD009_BAD_GOLD",
+                "flag": "gold_wrong_high_confidence",
+                "reason": "Deliberately wrong test gold.",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    flags = load_quality_flags(flags_path)
+    assert flags["TD009_BAD_GOLD"].flag == "gold_wrong_high_confidence"
+
+    report = run_replay_benchmark(dataset=dataset_path, cache_path=cache_path, quality_flags_path=flags_path, k=2)
+
+    assert report["total"] == 2
+    assert report["correct"] == 1
+    assert report["comparable"] == 2
+    assert report["excluded_total"] == 1
+    assert report["quality_flag_counts"] == {"gold_wrong_high_confidence": 1}
+    assert report["trusted_correct"] == 1
+    assert report["trusted_comparable"] == 1
+    assert report["trusted_accuracy"] == 1.0
+    bad_result = next(item for item in report["results"] if item["case_id"] == "TD009_BAD_GOLD")
+    assert bad_result["quality_reason"] == "Deliberately wrong test gold."

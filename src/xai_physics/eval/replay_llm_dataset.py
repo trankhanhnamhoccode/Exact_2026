@@ -77,12 +77,63 @@ class ReplayEvalResult:
     correct: bool | None
     error: str | None
     schema_source: str | None
+    quality_flag: str | None = None
+    quality_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class QualityFlag:
+    case_id: str
+    flag: str
+    reason: str | None = None
 
 
 def _parse_case_ids(value: str | None) -> set[str] | None:
     if not value:
         return None
     return {part.strip() for part in value.split(",") if part.strip()}
+
+
+def _parse_flag_names(value: str | None) -> set[str]:
+    if not value:
+        return {"gold_wrong", "gold_wrong_high_confidence"}
+    return {part.strip() for part in value.split(",") if part.strip()}
+
+
+def load_quality_flags(path: Path | None) -> dict[str, QualityFlag]:
+    """Load JSONL quality flags keyed by case id.
+
+    Each non-empty line should be a JSON object with ``case_id`` (or ``id``),
+    ``flag`` and an optional ``reason``. Unknown fields are ignored so this
+    file can be extended with manual review metadata later.
+    """
+
+    if path is None:
+        return {}
+
+    flags: dict[str, QualityFlag] = {}
+    with Path(path).open("r", encoding="utf-8-sig") as f:
+        for line_no, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Invalid quality flag JSON on line {line_no}: {exc}") from exc
+            if not isinstance(obj, dict):
+                continue
+            case_id = str(obj.get("case_id") or obj.get("id") or "").strip()
+            flag = str(obj.get("flag") or "").strip()
+            if not case_id or not flag:
+                continue
+            reason = obj.get("reason")
+            flags[case_id] = QualityFlag(
+                case_id=case_id,
+                flag=flag,
+                reason=str(reason) if reason is not None else None,
+            )
+    return flags
 
 
 def _normalize_math_text(value: str | None) -> str:
@@ -215,6 +266,8 @@ def run_replay_benchmark(
     question_column: str = "question",
     expected_column: str = "answer",
     unit_column: str = "unit",
+    quality_flags_path: Path | None = None,
+    exclude_quality_flags: set[str] | None = None,
 ) -> dict[str, Any]:
     cache = load_replay_cache(cache_path)
     client = ReplaySchemaLLM(cache)
@@ -228,9 +281,12 @@ def run_replay_benchmark(
         limit=limit,
         case_ids=case_ids,
     )
+    quality_flags = load_quality_flags(quality_flags_path)
+    excluded_flag_names = exclude_quality_flags or {"gold_wrong", "gold_wrong_high_confidence"}
 
     results: list[ReplayEvalResult] = []
     for row in rows:
+        quality_flag = quality_flags.get(row.case_id)
         if row.case_id not in cache:
             if skip_missing_cache:
                 continue
@@ -244,6 +300,8 @@ def run_replay_benchmark(
                     correct=False,
                     error=f"No cached schema for {row.case_id}",
                     schema_source=None,
+                    quality_flag=quality_flag.flag if quality_flag else None,
+                    quality_reason=quality_flag.reason if quality_flag else None,
                 )
             )
             continue
@@ -268,6 +326,8 @@ def run_replay_benchmark(
                     correct=correct,
                     error=result.error,
                     schema_source=schema_source,
+                    quality_flag=quality_flag.flag if quality_flag else None,
+                    quality_reason=quality_flag.reason if quality_flag else None,
                 )
             )
         except Exception as exc:  # pragma: no cover - defensive CLI boundary
@@ -281,6 +341,8 @@ def run_replay_benchmark(
                     correct=False,
                     error=str(exc),
                     schema_source=None,
+                    quality_flag=quality_flag.flag if quality_flag else None,
+                    quality_reason=quality_flag.reason if quality_flag else None,
                 )
             )
 
@@ -289,12 +351,29 @@ def run_replay_benchmark(
     correct_count = sum(1 for r in comparable if r.correct)
     solved_count = sum(1 for r in results if r.status in {"ok", "solved"})
 
+    def is_excluded(result: ReplayEvalResult) -> bool:
+        return result.quality_flag in excluded_flag_names if result.quality_flag else False
+
+    excluded_results = [r for r in results if is_excluded(r)]
+    trusted_comparable = [r for r in comparable if not is_excluded(r)]
+    trusted_correct = sum(1 for r in trusted_comparable if r.correct)
+    quality_flag_counts: dict[str, int] = {}
+    for result in results:
+        if result.quality_flag:
+            quality_flag_counts[result.quality_flag] = quality_flag_counts.get(result.quality_flag, 0) + 1
+
     return {
         "total": total,
         "solved": solved_count,
         "comparable": len(comparable),
         "correct": correct_count,
         "accuracy": correct_count / len(comparable) if comparable else 0.0,
+        "quality_flag_counts": quality_flag_counts,
+        "excluded_quality_flags": sorted(excluded_flag_names),
+        "excluded_total": len(excluded_results),
+        "trusted_comparable": len(trusted_comparable),
+        "trusted_correct": trusted_correct,
+        "trusted_accuracy": trusted_correct / len(trusted_comparable) if trusted_comparable else 0.0,
         "results": [r.__dict__ for r in results],
     }
 
@@ -312,6 +391,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--question-column", default="question")
     parser.add_argument("--expected-column", default="answer")
     parser.add_argument("--unit-column", default="unit")
+    parser.add_argument("--quality-flags", type=Path, help="Optional JSONL file of case-level quality flags.")
+    parser.add_argument(
+        "--exclude-quality-flags",
+        default="gold_wrong,gold_wrong_high_confidence",
+        help="Comma-separated quality flag names to exclude from trusted accuracy.",
+    )
     parser.add_argument("--json-out", type=Path, help="Optional path to save detailed JSON results.")
     args = parser.parse_args(argv)
 
@@ -327,11 +412,19 @@ def main(argv: list[str] | None = None) -> None:
         question_column=args.question_column,
         expected_column=args.expected_column,
         unit_column=args.unit_column,
+        quality_flags_path=args.quality_flags,
+        exclude_quality_flags=_parse_flag_names(args.exclude_quality_flags),
     )
 
     print(f"replayed: {report['total']}")
     print(f"solved: {report['solved']}")
     print(f"correct: {report['correct']} / {report['comparable']} = {report['accuracy']:.2%}")
+    if report.get("excluded_total", 0):
+        print(f"excluded quality-flagged: {report['excluded_total']}")
+        print(
+            "trusted correct: "
+            f"{report['trusted_correct']} / {report['trusted_comparable']} = {report['trusted_accuracy']:.2%}"
+        )
 
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
