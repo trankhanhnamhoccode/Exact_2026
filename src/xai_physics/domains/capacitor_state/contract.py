@@ -37,25 +37,40 @@ def _err(message: str) -> None:
 
 
 def _is_quantity_dict(data: Any) -> bool:
-    return (
-        isinstance(data, dict)
-        and "value" in data
-        and "unit" in data
-        and isinstance(data["value"], (int, float))
-        and isinstance(data["unit"], str)
-    )
+    if data is None:
+        return False
+    if not isinstance(data, dict):
+        return False
+    if not data:
+        return False
+    value = data.get("value")
+    if value is None:
+        # Unknown quantities are allowed in capacitor_state schemas; the engine may infer them.
+        return True
+    if isinstance(value, bool):
+        return False
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    unit = data.get("unit", "")
+    return unit is None or isinstance(unit, str)
 
 
 def _validate_quantity(data: Any, path: str) -> None:
-    if data is None:
+    if data is None or data == {}:
         return
 
     if not _is_quantity_dict(data):
         _err(f"{path} must be a quantity dict with numeric value and string unit.")
 
-    unit = normalize_unit(data["unit"])
-    if unit not in UNIT_TO_SI:
-        _err(f"{path}.unit is unsupported: {data['unit']}")
+    if data.get("value") is None:
+        return
+
+    unit = normalize_unit(data.get("unit", ""))
+    data["unit"] = unit
+    if unit and unit not in UNIT_TO_SI:
+        _err(f"{path}.unit is unsupported: {data.get('unit')}")
 
 
 def _validate_entities(schema: dict[str, Any]) -> set[str]:

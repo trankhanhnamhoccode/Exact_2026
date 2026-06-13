@@ -31,7 +31,10 @@ def detect_tags(problem: str) -> list[TagHit]:
         ("magnetic_field", 1.2, r"magnetic field|\bB\s*="),
         ("point_charge", 1.4, r"point charge"),
         ("electric_field", 1.2, r"electric field|\bE\s*="),
-        ("measurement_error", 1.5, r"relative error|percentage error|absolute error"),
+        ("measurement_error", 1.5, r"relative error|percentage error|absolute error|least count|average absolute error"),
+        ("least_count", 1.3, r"least count"),
+        ("repeated_measurements", 1.2, r"average value|average absolute error|mean value|repeated measurements"),
+        ("force", 1.2, r"attractive force|force between|force on"),
         ("time_domain", 1.2, r"instantaneous|at time|cos|sin|omega|angular frequency"),
     ]
 
@@ -133,5 +136,26 @@ def formula_rule_scores(problem: str) -> dict[str, float]:
 
     if "lc" in text and "energy" in text and ("time" in text or "omega" in text or "cos" in text):
         add("lc_electric_energy_time", 4.5)
+
+    if "capacitor" in text and "energy" in text and "charge" in text and ("voltage" in text or "potential difference" in text):
+        add("capacitor_energy_charge_voltage", 5.5)
+
+    if ("distance" in text or "separation" in text) and ("halved" in text or "doubled" in text) and "capacitance" in text:
+        add("parallel_plate_capacitance_distance_scaling", 5.5)
+
+    if ("attractive force" in text or "force between" in text) and "plate" in text and ("charge" in text or "q" in text) and ("area" in text or "s =" in text):
+        add("capacitor_plate_force_by_charge_area", 5.5)
+
+    if "least count" in text and "absolute error" in text:
+        add("instrument_absolute_error", 5.5)
+
+    if "average absolute error" in text or "average value" in text or "mean value" in text:
+        add("measurement_average", 5.5)
+
+    if ("is" in text and "resonance" in text) or "in resonance at" in text:
+        add("resonance_check", 5.5)
+
+    if "parallel" in text and ("resistance" in text or "resistor" in text or "branches" in text):
+        add("parallel_resistance", 5.5)
 
     return scores

@@ -117,44 +117,6 @@ def extract_equations_schema_from_text(problem: str) -> dict[str, Any] | None:
                 "constraints": [],
             }
 
-    # Two capacitors in parallel connected to a source: same voltage U = Q/C.
-    # If the text says one capacitor has a charge and gives U < bound, choose the
-    # capacitance whose implied voltage satisfies the bound.
-    if "capacitor" in low and "parallel" in low and "charge" in low and "voltage" in low:
-        caps = re.findall(rf"\bC(\d+)\s*=\s*({NUM})\s*(pF|nF|uF|μF|µF|mF|F)\b", text, flags=re.I)
-        charge_m = re.search(rf"charge\s+(?:of\s+)?({NUM})\s*(pC|nC|uC|μC|µC|mC|C)\b", text, flags=re.I)
-        bound_m = re.search(rf"U\s*<\s*({NUM})\s*V", text, flags=re.I)
-        if len(caps) >= 1 and charge_m:
-            q_value = _parse_number(charge_m.group(1))
-            q_unit = _unit(charge_m.group(2))
-            # Lightweight unit conversion only for choosing among candidates.
-            cap_factor = {"F": 1.0, "mF": 1e-3, "uF": 1e-6, "nF": 1e-9, "pF": 1e-12}
-            q_factor = {"C": 1.0, "mC": 1e-3, "uC": 1e-6, "nC": 1e-9, "pC": 1e-12}
-            q_si = q_value * q_factor.get(q_unit, 1.0)
-            bound = _parse_number(bound_m.group(1)) if bound_m else None
-            chosen = caps[0]
-            for cap in caps:
-                _, c_val_raw, c_unit_raw = cap
-                c_val = _parse_number(c_val_raw)
-                c_unit = _unit(c_unit_raw)
-                u_guess = q_si / (c_val * cap_factor.get(c_unit, 1.0))
-                if bound is None or u_guess < bound:
-                    chosen = cap
-                    break
-            idx, c_val_raw, c_unit_raw = chosen
-            c_val = _parse_number(c_val_raw)
-            c_unit = _unit(c_unit_raw)
-            return {
-                "domain": "equations",
-                "objects": [
-                    {"id": f"C{idx}", "type": "capacitance", "role": "given", "value": str(c_val), "unit": c_unit},
-                    {"id": "Q1", "type": "charge", "role": "given", "value": str(q_value), "unit": q_unit},
-                    {"id": "U_query", "type": "voltage", "role": "query", "value": None, "unit": "V"},
-                ],
-                "relations": [{"type": "formula", "name": "capacitor_charge_voltage", "objects": [f"C{idx}", "Q1", "U_query"]}],
-                "constraints": [],
-            }
-
     # Two capacitors in series: voltage division.
     if "capacitor" in low and "series" in low and "voltage" in low:
         caps = re.findall(rf"\bC(\d+)\s*=\s*({NUM})\s*(pF|nF|uF|μF|µF|mF|F)\b", text, flags=re.I)

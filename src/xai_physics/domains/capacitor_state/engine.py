@@ -340,11 +340,15 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         if not queries:
             raise ValueError("Schema has no query.")
 
-        answer = _answer_query(queries[0], system, initial_system=initial_system)
+        answers = [
+            _answer_query(query, system, initial_system=initial_system)
+            for query in queries
+        ]
+        answer = "; ".join(answers)
         result.answer = answer
         result.add_step(
             "Final answer",
-            f"The requested {queries[0].get('type')} is {answer}.",
+            f"The requested output is {answer}.",
         )
 
         return result

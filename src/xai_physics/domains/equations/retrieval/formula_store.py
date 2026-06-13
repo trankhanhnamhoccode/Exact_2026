@@ -403,6 +403,134 @@ FORMULA_DOCS: list[FormulaDoc] = [
         ),
     ),
 
+    FormulaDoc(
+        id="capacitor_energy_charge_voltage",
+        name="Capacitor energy from charge and voltage",
+        equation="W = 1/2 Q U",
+        description="Use for scalar capacitor energy when charge and voltage are known.",
+        quantity_types=["energy", "charge", "voltage"],
+        query_types=["energy", "charge", "voltage"],
+        tags=["capacitor", "energy", "charge", "voltage"],
+        keywords=["energy stored", "charge and voltage", "electric field energy", "half Q U"],
+        schema_template=_schema(
+            "capacitor_energy_charge_voltage",
+            [
+                {"id": "Q1", "type": "charge", "role": "given", "value": "<number>", "unit": "<C|mC|uC|nC>"},
+                {"id": "U1", "type": "voltage", "role": "given", "value": "<number>", "unit": "<V|kV|mV>"},
+                {"id": "W_query", "type": "energy", "role": "query", "value": None, "unit": "<J|mJ|uJ>"},
+            ],
+        ),
+    ),
+    FormulaDoc(
+        id="parallel_plate_capacitance_distance_scaling",
+        name="Parallel-plate capacitance scaling from plate separation",
+        equation="C2/C1 = d1/d2",
+        description="Use when initial capacitance is known and plate separation is scaled while area and medium stay fixed.",
+        quantity_types=["capacitance", "ratio"],
+        query_types=["capacitance"],
+        tags=["capacitor", "parallel_plate", "capacitance", "distance_scaling"],
+        keywords=["distance halved", "distance doubled", "plate separation halved", "new capacitance"],
+        schema_template=_schema(
+            "parallel_plate_capacitance_distance_scaling",
+            [
+                {"id": "C_initial", "type": "capacitance", "role": "given", "value": "<number>", "unit": "<F|uF|nF|pF>", "symbol": "C1"},
+                {"id": "d_ratio", "type": "ratio", "role": "given", "value": "<number>", "unit": "times", "symbol": "d2/d1"},
+                {"id": "C_query", "type": "capacitance", "role": "query", "value": None, "unit": "<F|uF|nF|pF>", "symbol": "C2"},
+            ],
+        ),
+    ),
+    FormulaDoc(
+        id="capacitor_plate_force_by_charge_area",
+        name="Attractive force between capacitor plates from charge and area",
+        equation="F = Q^2/(2 eps0 eps_r A)",
+        description="Use for electrostatic attractive force between parallel capacitor plates when charge and plate area are known.",
+        quantity_types=["force", "charge", "area", "relative_permittivity"],
+        query_types=["force"],
+        tags=["capacitor", "parallel_plate", "force", "charge", "area"],
+        keywords=["attractive force between plates", "force between capacitor plates", "charge and area"],
+        schema_template=_schema(
+            "capacitor_plate_force_by_charge_area",
+            [
+                {"id": "Q1", "type": "charge", "role": "given", "value": "<number>", "unit": "<C|mC|uC>"},
+                {"id": "A1", "type": "area", "role": "given", "value": "<number>", "unit": "<m2|cm2>"},
+                {"id": "F_query", "type": "force", "role": "query", "value": None, "unit": "<N|mN>"},
+            ],
+        ),
+    ),
+    FormulaDoc(
+        id="instrument_absolute_error",
+        name="Instrument absolute error from least count",
+        equation="Delta x = least count",
+        description="Use when an instrument least count is given and the question asks for absolute measurement error.",
+        quantity_types=["absolute_error", "least_count", "measured_value"],
+        query_types=["absolute_error"],
+        tags=["measurement_error", "absolute_error", "least_count", "instrument"],
+        keywords=["least count", "absolute error", "ammeter", "voltmeter", "instrument"],
+        schema_template=_schema(
+            "instrument_absolute_error",
+            [
+                {"id": "least_count1", "type": "least_count", "role": "given", "value": "<number>", "unit": "<unit>"},
+                {"id": "err_query", "type": "absolute_error", "role": "query", "value": None, "unit": "<same unit>"},
+            ],
+        ),
+    ),
+    FormulaDoc(
+        id="measurement_average",
+        name="Average value and average absolute error from repeated measurements",
+        equation="xbar = mean(x_i), Delta = mean(|x_i-xbar|)",
+        description="Use for repeated measurements asking average value, average absolute error, or relative error.",
+        quantity_types=["measured_value", "average_value", "average_absolute_error", "relative_error"],
+        query_types=["average_value", "average_absolute_error", "relative_error"],
+        tags=["measurement_error", "average_value", "average_absolute_error", "repeated_measurements"],
+        keywords=["average value", "average absolute error", "repeated measurements", "mean measurement"],
+        schema_template=_schema(
+            "measurement_average",
+            [
+                {"id": "x1", "type": "measured_value", "role": "given", "value": "<number>", "unit": "<unit>"},
+                {"id": "x2", "type": "measured_value", "role": "given", "value": "<number>", "unit": "<unit>"},
+                {"id": "mean_query", "type": "average_value", "role": "query", "value": None, "unit": "<unit>"},
+                {"id": "err_query", "type": "average_absolute_error", "role": "query", "value": None, "unit": "<unit>"},
+            ],
+        ),
+    ),
+    FormulaDoc(
+        id="resonance_check",
+        name="LC/RLC resonance yes-no check",
+        equation="compare f with f0 = 1/(2*pi*sqrt(LC))",
+        description="Use for yes/no questions asking whether a circuit is in resonance at a given frequency.",
+        quantity_types=["frequency", "inductance", "capacitance"],
+        query_types=["boolean"],
+        tags=["lc", "rlc", "resonance", "frequency", "yes_no"],
+        keywords=["is it in resonance", "resonance at frequency", "yes or no resonance"],
+        schema_template=_schema(
+            "resonance_check",
+            [
+                {"id": "L1", "type": "inductance", "role": "given", "value": "<number>", "unit": "<H|mH>"},
+                {"id": "C1", "type": "capacitance", "role": "given", "value": "<number>", "unit": "<F|uF>"},
+                {"id": "f1", "type": "frequency", "role": "given", "value": "<number>", "unit": "<Hz|kHz>"},
+                {"id": "answer_query", "type": "boolean", "role": "query", "value": None, "unit": ""},
+            ],
+        ),
+    ),
+    FormulaDoc(
+        id="parallel_resistance",
+        name="Equivalent resistance of parallel branches",
+        equation="1/R = sum(1/R_i)",
+        description="Use for total resistance of resistors or branches connected in parallel.",
+        quantity_types=["resistance"],
+        query_types=["resistance"],
+        tags=["circuit", "resistance", "parallel"],
+        keywords=["parallel resistance", "branches connected in parallel", "total resistance"],
+        schema_template=_schema(
+            "parallel_resistance",
+            [
+                {"id": "R1", "type": "resistance", "role": "given", "value": "<number>", "unit": "<ohm>"},
+                {"id": "R2", "type": "resistance", "role": "given", "value": "<number>", "unit": "<ohm>"},
+                {"id": "R_query", "type": "resistance", "role": "query", "value": None, "unit": "<ohm>"},
+            ],
+        ),
+    ),
+
 ]
 
 

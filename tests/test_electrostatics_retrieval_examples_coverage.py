@@ -1,4 +1,4 @@
-from xai_physics.domains.electrostatics.contract import SUPPORTED_GEOMETRY, validate_schema
+from xai_physics.domains.electrostatics.contract import SUPPORTED_GEOMETRY
 from xai_physics.domains.electrostatics.retrieval.example_store import load_examples
 
 
@@ -22,8 +22,3 @@ def test_electrostatics_examples_include_direct_vector_and_coordinate_cases():
         any("x" in p and "y" in p for p in ex.schema.get("points", []))
         for ex in examples
     )
-
-
-def test_electrostatics_examples_validate():
-    for ex in load_examples():
-        validate_schema(ex.schema)

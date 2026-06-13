@@ -42,7 +42,7 @@ def solve_problem_with_llm(
     raw_output = client.generate(prompt_result.prompt)
 
     deterministic_schema = extract_electrostatics_schema_from_text(problem)
-    if deterministic_schema is None:
+    if deterministic_schema is None and prompt_result.domain_decision.domain == "equations":
         deterministic_schema = extract_equations_schema_from_text(problem)
 
     try:
