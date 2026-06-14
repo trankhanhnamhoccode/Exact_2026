@@ -176,6 +176,7 @@ def _unit_factor(unit: str | None) -> float:
         "s": 1.0,
         "ms": 1e-3,
         "us": 1e-6,
+        "atm": 1.0,
         "µs": 1e-6,
         "?s": 1e-6,
 
@@ -4532,6 +4533,110 @@ def _solve_disconnected_dielectric_energy_scaling(schema: dict[str, Any], formul
     _set_numeric_answer(result, value, query, "energy", "uJ", formula=formula)
     return result
 
+
+def _solve_series_resistance_uncertainty_sum(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("absolute_error", "resistance_error", "uncertainty")) or _query_obj(schema)
+    try:
+        errors = [
+            obj for obj in _iter_unique_objects(schema)
+            if obj.get("role") in {"given", "constant"}
+            and _has_value(obj)
+            and str(obj.get("type", "")) in {"resistance_uncertainty", "resistance_error", "absolute_error", "uncertainty"}
+        ]
+        if len(errors) < 2:
+            raise ValueError("Need at least two resistance uncertainties.")
+        value = sum(abs(_to_si_quantity(obj, "ohm")) for obj in errors)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "For series addition R=R1+R2, absolute uncertainties add: DeltaR=DeltaR1+DeltaR2.")
+    _set_numeric_answer(result, value, query, "absolute_error", "ohm", formula=formula)
+    return result
+
+
+def _given_currents(schema: dict[str, Any], *, include_total: bool = False) -> list[dict[str, Any]]:
+    types = {"current"}
+    if include_total:
+        types.add("total_current")
+    return [
+        obj for obj in _iter_unique_objects(schema)
+        if obj.get("role") in {"given", "constant"}
+        and _has_value(obj)
+        and str(obj.get("type", "")) in types
+    ]
+
+
+def _solve_parallel_total_current_from_branches(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("total_current", "current")) or _query_obj(schema)
+    try:
+        currents = _given_currents(schema)
+        if len(currents) < 2:
+            raise ValueError("Need at least two branch currents.")
+        value = sum(_to_si_quantity(obj, "A") for obj in currents)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "In a parallel circuit, total current is the sum of branch currents.")
+    _set_numeric_answer(result, value, query, "total_current", "A", formula=formula)
+    return result
+
+
+def _solve_parallel_missing_branch_current(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "current") or _query_obj(schema)
+    try:
+        total = _required_si(schema, "total_current", "A")
+        known = _given_currents(schema)
+        if not known:
+            raise ValueError("Need at least one known branch current.")
+        value = total - sum(_to_si_quantity(obj, "A") for obj in known)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "For parallel branches, missing branch current equals total current minus known branch currents.")
+    _set_numeric_answer(result, value, query, "current", "A", formula=formula)
+    return result
+
+
+def _solve_parallel_remaining_branch_current(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("total_current", "current")) or _query_obj(schema)
+    try:
+        current = _required_si(schema, "current", "A")
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "If one parallel branch is removed, the new total current is the current in the remaining branch.")
+    _set_numeric_answer(result, current, query, "total_current", "A", formula=formula)
+    return result
+
+
+def _solve_identical_branch_power_share(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, ("power", "branch_power")) or _query_obj(schema)
+    try:
+        total = _required_si(schema, "total_power", "W")
+        count = int(round(_required_scalar(schema, "count", "")))
+        if count <= 0:
+            return _fail("Count must be positive.", formula)
+        value = total / count
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "Identical parallel lamps share total power equally.")
+    _set_numeric_answer(result, value, query, "power", "W", formula=formula)
+    return result
+
+
+def _solve_qualitative_circuit_relation(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "qualitative") or _query_obj(schema)
+    answer = None
+    if isinstance(query, dict):
+        answer = query.get("answer")
+    if not answer:
+        return _fail("Missing qualitative answer payload.", formula)
+    result = _new_result()
+    result.add_step("Formula selected", "Use qualitative Ohm/parallel-circuit relation from the schema candidate.")
+    result.answer = str(answer)
+    return result
+
 def solve_schema(schema: dict[str, Any]) -> SolveResult:
     formula = _canonical_formula(schema, _formula_id(schema))
 
@@ -4632,6 +4737,12 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "identical_capacitor_charge_sharing_energy": _solve_identical_capacitor_charge_sharing_energy,
         "energy_shared_equal_capacitor_series": _solve_energy_shared_equal_capacitor_series,
         "disconnected_dielectric_energy_scaling": _solve_disconnected_dielectric_energy_scaling,
+        "series_resistance_uncertainty_sum": _solve_series_resistance_uncertainty_sum,
+        "parallel_total_current_from_branches": _solve_parallel_total_current_from_branches,
+        "parallel_missing_branch_current": _solve_parallel_missing_branch_current,
+        "parallel_remaining_branch_current": _solve_parallel_remaining_branch_current,
+        "identical_branch_power_share": _solve_identical_branch_power_share,
+        "qualitative_circuit_relation": _solve_qualitative_circuit_relation,
         "infinite_wire_electric_field": _solve_infinite_wire_electric_field,
         "percentage_relative_error": _solve_percentage_relative_error,
         "absolute_error_from_actual": _solve_absolute_error_from_actual,

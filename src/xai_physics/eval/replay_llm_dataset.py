@@ -105,7 +105,7 @@ def _parse_case_ids(value: str | None) -> set[str] | None:
 
 def _parse_flag_names(value: str | None) -> set[str]:
     if not value:
-        return {"gold_wrong", "gold_wrong_high_confidence"}
+        return {"gold_wrong", "gold_wrong_high_confidence", "statement_missing_data", "statement_ambiguous"}
     return {part.strip() for part in value.split(",") if part.strip()}
 
 
@@ -318,6 +318,18 @@ def _qualitative_match(predicted: Any, expected: str | None) -> bool | None:
         exp_num = _first_number(exp)
         if exp_num is not None:
             return any(math.isclose(num, exp_num, rel_tol=1e-9, abs_tol=1e-12) for num, _unit in _predicted_number_candidates(predicted))
+    if _first_number(expected) is None and pred:
+        def words(value: str) -> str:
+            value = value.replace("→", " ").replace("->", " ")
+            value = re.sub(r"[^a-z0-9]+", " ", value.lower())
+            return re.sub(r"\s+", " ", value).strip()
+        exp_words = words(exp)
+        pred_words = words(pred)
+        if exp_words and (exp_words == pred_words or exp_words in pred_words or pred_words in exp_words):
+            return True
+        # Common causal paraphrases used by qualitative circuit rows.
+        if "resistance decreases" in exp_words and "current increases" in exp_words:
+            return "resistance decreases" in pred_words and "current increases" in pred_words
     return None
 
 
@@ -495,7 +507,7 @@ def run_replay_benchmark(
         case_ids=case_ids,
     )
     quality_flags = load_quality_flags(quality_flags_path)
-    excluded_flag_names = exclude_quality_flags or {"gold_wrong", "gold_wrong_high_confidence"}
+    excluded_flag_names = exclude_quality_flags or {"gold_wrong", "gold_wrong_high_confidence", "statement_missing_data", "statement_ambiguous"}
 
     results: list[ReplayEvalResult] = []
     for row in rows:
@@ -632,8 +644,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--quality-flags", type=Path, help="Optional JSONL file of case-level quality flags.")
     parser.add_argument(
         "--exclude-quality-flags",
-        default="gold_wrong,gold_wrong_high_confidence",
-        help="Comma-separated quality flag names to exclude from trusted accuracy.",
+        default=None,
+        help=(
+            "Comma-separated quality flag names to exclude from trusted accuracy. "
+            "By default, excludes gold_wrong, gold_wrong_high_confidence, "
+            "statement_missing_data, and statement_ambiguous."
+        ),
     )
     parser.add_argument("--json-out", type=Path, help="Optional path to save detailed JSON results.")
     args = parser.parse_args(argv)

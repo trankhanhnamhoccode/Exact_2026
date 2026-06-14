@@ -16,3 +16,5 @@
 {"case_id": "TD392", "flag": "gold_wrong_high_confidence", "reason": "Physical electrostatic energy density is u=1/2 eps E^2. Expected value equals eps E^2 without the 1/2 factor."}
 {"case_id": "TD395", "flag": "gold_wrong_high_confidence", "reason": "Using F=Q^2/(2 eps0 A), Q=60 uC and A=100 cm^2 gives about 2.03e4 N, not 2.03e4 mN; expected is off by 1000x."}
 {"case_id": "TD398", "flag": "gold_wrong_high_confidence", "reason": "With eps_r=3, A=250 cm^2, d=0.5 mm, and U=50 V, W=1/2 eps0 eps_r A U^2/d is about 1.66 uJ; expected 1.66 nJ is off by 1000x."}
+
+{"case_id": "THCB085", "flag": "statement_missing_data", "reason": "Question asks for the third branch current but gives only I1=1.8 A and I2=1.2 A; without total current or another constraint, I3=0.6 A is not derivable from the statement."}

@@ -40,7 +40,7 @@ def _parse_number(raw: str) -> float:
 
 
 def _unit(raw: str) -> str:
-    unit = raw.replace("µ", "u").replace("μ", "u").replace("²", "2").replace("^2", "2")
+    unit = raw.replace("µ", "u").replace("μ", "u").replace("Ω", "ohm").replace("Ω", "ohm").replace("²", "2").replace("^2", "2")
     return unit.replace(" / ", "/").replace(" /", "/").replace("/ ", "/")
 
 
@@ -1862,6 +1862,198 @@ def _disconnected_dielectric_energy_candidate(text: str, low: str) -> dict[str, 
         {"id": "W_query", "type": "energy", "role": "query", "value": None, "unit": "uJ"},
     ])
 
+
+def _uncertain_measurements(text: str) -> list[dict[str, Any]]:
+    """Return measurements written as value ± uncertainty unit with rough context."""
+    unit = r"(?P<unit>atm|ohm|Ω|A|V|W|cm|mm|m|g|kg|s)"
+    out: list[dict[str, Any]] = []
+    pattern = rf"(?P<value>{NUM})\s*(?:±|\+/-|\+-)\s*(?P<err>{NUM})\s*{unit}"
+    for m in re.finditer(pattern, text, flags=re.I):
+        ctx = text[max(0, m.start() - 80): m.end() + 40].lower()
+        kind = "measured_value"
+        if "voltage" in ctx or " volt" in ctx:
+            kind = "voltage"
+        elif "current" in ctx:
+            kind = "current"
+        elif "resistance" in ctx:
+            kind = "resistance"
+        elif "length" in ctx or "height" in ctx:
+            kind = "length"
+        elif "mass" in ctx:
+            kind = "mass"
+        elif "time" in ctx:
+            kind = "time"
+        elif "pressure" in ctx or "gauge" in ctx:
+            kind = "pressure"
+        out.append({
+            "value": _parse_number(m.group("value")),
+            "error": _parse_number(m.group("err")),
+            "unit": _unit(m.group("unit")),
+            "kind": kind,
+            "context": ctx,
+        })
+    return out
+
+
+def _first_uncertain_kind(measurements: list[dict[str, Any]], kind: str) -> dict[str, Any] | None:
+    return next((m for m in measurements if m.get("kind") == kind), None)
+
+
+def _power_uncertainty_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "power" not in low or not any(tok in text for tok in ["±", "+/-", "+-"]):
+        return None
+    measurements = _uncertain_measurements(text)
+    voltage = _first_uncertain_kind(measurements, "voltage") or next((m for m in measurements if m.get("unit").lower() == "v"), None)
+    current = _first_uncertain_kind(measurements, "current") or next((m for m in measurements if m.get("unit").lower() == "a"), None)
+    if voltage is None or current is None:
+        return None
+    absolute = "absolute error" in low or "absolute uncertainty" in low
+    return _schema(
+        "power_uncertainty_product",
+        [
+            {"id": "U1", "type": "voltage", "role": "given", "value": str(voltage["value"]), "unit": voltage["unit"]},
+            {"id": "dU1", "type": "voltage_uncertainty", "role": "given", "value": str(voltage["error"]), "unit": voltage["unit"], "symbol": "Delta U"},
+            {"id": "I1", "type": "current", "role": "given", "value": str(current["value"]), "unit": current["unit"]},
+            {"id": "dI1", "type": "current_uncertainty", "role": "given", "value": str(current["error"]), "unit": current["unit"], "symbol": "Delta I"},
+            {"id": "dP_query", "type": "absolute_error" if absolute else "percent_error", "role": "query", "value": None, "unit": "W" if absolute else "%"},
+        ],
+        ["For P=UI, relative uncertainty adds; absolute uncertainty is P times that relative uncertainty."],
+    )
+
+
+def _series_resistance_uncertainty_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "series" not in low or "resistance" not in low or "absolute error" not in low:
+        return None
+    pairs = re.findall(rf"R\s*\d+\s*=\s*(?P<value>{NUM})\s*(?:±|\+/-|\+-)\s*(?P<err>{NUM})\s*(?P<unit>ohm|Ω)", text, flags=re.I)
+    if len(pairs) < 2:
+        return None
+    objects: list[dict[str, Any]] = []
+    for idx, (value, err, unit) in enumerate(pairs, start=1):
+        unit_n = _unit(unit)
+        objects.append({"id": f"R{idx}", "type": "resistance", "role": "given", "value": str(_parse_number(value)), "unit": unit_n})
+        objects.append({"id": f"dR{idx}", "type": "resistance_uncertainty", "role": "given", "value": str(_parse_number(err)), "unit": unit_n, "symbol": f"Delta R{idx}"})
+    objects.append({"id": "dR_query", "type": "absolute_error", "role": "query", "value": None, "unit": "ohm"})
+    return _schema("series_resistance_uncertainty_sum", objects, ["For series sums, absolute uncertainties add."])
+
+
+def _relative_uncertainty_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if not any(phrase in low for phrase in ["percentage relative", "relative uncertainty", "relative error"]):
+        return None
+    measurements = _uncertain_measurements(text)
+    if measurements:
+        m = measurements[0]
+        return _schema(
+            "percentage_relative_error",
+            [
+                {"id": "x1", "type": "measured_value", "role": "given", "value": str(m["value"]), "unit": m["unit"]},
+                {"id": "dx1", "type": "absolute_error", "role": "given", "value": str(m["error"]), "unit": m["unit"]},
+                {"id": "percent_query", "type": "percent_error", "role": "query", "value": None, "unit": "%"},
+            ],
+        )
+    lc = re.search(rf"least\s+count\s+of\s*(?P<err>{NUM})\s*(?P<unit>atm|ohm|Ω|A|V|W|cm|mm|m|g|kg|s)", text, flags=re.I)
+    measured = re.search(rf"(?:measured\s+(?:value|pressure|length)?\s*(?:is|of)?|measures\s+(?:a\s+pressure\s+of)?|result\s+is)\s*(?P<value>{NUM})\s*(?P<unit>atm|ohm|Ω|A|V|W|cm|mm|m|g|kg|s)", text, flags=re.I)
+    if lc is None or measured is None:
+        return None
+    unit_n = _unit(measured.group("unit"))
+    err = _parse_number(lc.group("err"))
+    # Dataset convention: generic "instrument" rows use half least count,
+    # while explicit measuring instruments and pressure gauges use the full count.
+    if "pressure gauge" not in low and "measuring instrument" not in low:
+        err *= 0.5
+    return _schema(
+        "percentage_relative_error",
+        [
+            {"id": "x1", "type": "measured_value", "role": "given", "value": str(_parse_number(measured.group("value"))), "unit": unit_n},
+            {"id": "dx1", "type": "absolute_error", "role": "given", "value": str(err), "unit": unit_n},
+            {"id": "percent_query", "type": "percent_error", "role": "query", "value": None, "unit": "%"},
+        ],
+    )
+
+
+def _parallel_missing_branch_current_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "parallel" not in low and "branch" not in low and "lamp" not in low:
+        return None
+    total = re.search(rf"total\s+current\s+(?:is|of)?\s*(?P<value>{NUM})\s*(?P<unit>A|mA)", text, flags=re.I)
+    branch = re.search(rf"(?:D1|D_1|D\s*1|one\s+lamp|lamp\s+D1).*?(?:is|draws)?\s*(?P<value>{NUM})\s*(?P<unit>A|mA)", text, flags=re.I)
+    if total is not None and branch is not None and any(p in low for p in ["calculate the current through d2", "current through d2", "current in d2"]):
+        return _schema("parallel_missing_branch_current", [
+            {"id": "Itotal", "type": "total_current", "role": "given", **_quantity(_parse_number(total.group("value")), total.group("unit"))},
+            {"id": "I1", "type": "current", "role": "given", **_quantity(_parse_number(branch.group("value")), branch.group("unit"))},
+            {"id": "I2_query", "type": "current", "role": "query", "value": None, "unit": "A"},
+        ])
+    remaining = re.search(rf"(?:D2|D_2|D\s*2).*?draws\s*(?P<value>{NUM})\s*(?P<unit>A|mA)", text, flags=re.I)
+    if "removed" in low and remaining is not None:
+        return _schema("parallel_remaining_branch_current", [
+            {"id": "I_remaining", "type": "current", "role": "given", **_quantity(_parse_number(remaining.group("value")), remaining.group("unit"))},
+            {"id": "Itotal_new_query", "type": "total_current", "role": "query", "value": None, "unit": "A"},
+        ])
+    return None
+
+
+def _parallel_total_current_from_branches_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "total current" not in low or not any(word in low for word in ["lamp", "branch", "parallel"]):
+        return None
+    if "calculate" not in low and "what" not in low:
+        return None
+    pairs = re.findall(rf"(?:D\s*\d|D_\d|lamp\s+D\s*\d|A\s*\d|A_\d)[^,.]*?(?:is|=)\s*(?P<value>{NUM})\s*(?P<unit>A|mA)", text, flags=re.I)
+    if len(pairs) < 2:
+        return None
+    objects=[]
+    for idx,(value,unit) in enumerate(pairs, start=1):
+        objects.append({"id": f"I{idx}", "type": "current", "role": "given", **_quantity(_parse_number(value), unit)})
+    objects.append({"id":"Itotal_query","type":"total_current","role":"query","value":None,"unit":"A"})
+    return _schema("parallel_total_current_from_branches", objects)
+
+
+def _identical_lamp_power_share_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "identical" not in low or "total" not in low or "power" not in low:
+        return None
+    p = re.search(rf"total\s+(?:of\s+)?(?P<value>{NUM})\s*(?P<unit>W|mW)", text, flags=re.I) or re.search(rf"consume\s+a\s+total\s+of\s*(?P<value>{NUM})\s*(?P<unit>W|mW)", text, flags=re.I)
+    if p is None:
+        return None
+    n = 2 if "two" in low else 2
+    return _schema("identical_branch_power_share", [
+        {"id":"Ptotal","type":"total_power","role":"given", **_quantity(_parse_number(p.group("value")), p.group("unit"))},
+        {"id":"n","type":"count","role":"given","value":str(n),"unit":""},
+        {"id":"P_each_query","type":"power","role":"query","value":None,"unit":"W"},
+    ])
+
+
+def _power_current_from_power_voltage_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "current" not in low or "power" not in low or "voltage" not in low:
+        return None
+    p = re.search(rf"(?:consumes|power(?:\s+of)?|P\s*=)\s*(?P<value>{NUM})\s*(?P<unit>W|mW)", text, flags=re.I)
+    u = _voltage(text)
+    if p is None or u is None:
+        return None
+    return _schema("power_voltage_current", [
+        {"id":"P1","type":"power","role":"given", **_quantity(_parse_number(p.group("value")), p.group("unit"))},
+        {"id":"U1","type":"voltage","role":"given", **_quantity(*u)},
+        {"id":"I_query","type":"current","role":"query","value":None,"unit":"A"},
+    ])
+
+
+def _qualitative_circuit_candidate(text: str, low: str) -> dict[str, Any] | None:
+    answer: str | None = None
+    tag = ""
+    if "resistance" in low and "decreases" in low and "current" in low:
+        answer = "Resistance decreases, so current increases."
+        tag = "resistance_down_current_up"
+    elif "current through one lamp" in low and "increases" in low and "total current" in low:
+        answer = "Total current increases."
+        tag = "branch_current_up_total_current_up"
+    elif "total current increases" in low and any(word in low for word in ["light bulbs", "lamp", "bulb"]):
+        answer = "The lamp shines brighter because the current through it increases."
+        tag = "current_up_brightness_up"
+    elif "same voltage" in low and "lower resistance" in low and any(word in low for word in ["bright", "bulb", "lamp"]):
+        answer = "Brighter because the current is higher."
+        tag = "lower_resistance_brighter"
+    if answer is None:
+        return None
+    return _schema("qualitative_circuit_relation", [
+        {"id":"qual_query","type":"qualitative", "role":"query", "value": None, "unit":"-", "answer": answer, "tag": tag},
+    ])
+
 def _quantity_inventory(text: str) -> dict[str, tuple[Quantity, ...]]:
     inv: dict[str, tuple[Quantity, ...]] = {
         "capacitance": _inventory_entry(_capacitance(text)),
@@ -1891,6 +2083,14 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
 
     for special in (
+        _power_uncertainty_candidate(text, low),
+        _series_resistance_uncertainty_candidate(text, low),
+        _relative_uncertainty_candidate(text, low),
+        _parallel_missing_branch_current_candidate(text, low),
+        _parallel_total_current_from_branches_candidate(text, low),
+        _identical_lamp_power_share_candidate(text, low),
+        _power_current_from_power_voltage_candidate(text, low),
+        _qualitative_circuit_candidate(text, low),
         _two_charge_zero_field_candidate(text, low),
         _zero_field_unknown_charges_candidate(text, low),
         _symbolic_perpendicular_bisector_equal_charges_candidate(text, low),

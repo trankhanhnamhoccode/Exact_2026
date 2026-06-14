@@ -101,6 +101,15 @@ def _try_equations_hybrid_selection(
             "identical_capacitor_charge_sharing_energy",
             "energy_shared_equal_capacitor_series",
             "disconnected_dielectric_energy_scaling",
+            "power_uncertainty_product",
+            "series_resistance_uncertainty_sum",
+            "percentage_relative_error",
+            "parallel_missing_branch_current",
+            "parallel_remaining_branch_current",
+            "parallel_total_current_from_branches",
+            "identical_branch_power_share",
+            "power_voltage_current",
+            "qualitative_circuit_relation",
         }
         has_voltage_formula_candidate = any(
             any(obj.get("role") == "query" and obj.get("type") == "voltage" for obj in schema.get("objects", []))
