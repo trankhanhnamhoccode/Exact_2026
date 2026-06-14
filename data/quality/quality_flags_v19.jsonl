@@ -1,0 +1,18 @@
+{"case_id": "DT042", "flag": "gold_wrong_high_confidence", "reason": "Duplicate of DT044 physics: E=9e5 V/m, r=0.4 m, eps_r=2.5 gives |q|≈4.0e-5 C and sign negative; expected -0.4e-6 C is off by 100x."}
+{"case_id": "DT098", "flag": "gold_wrong_high_confidence", "reason": "MA=1 cm, MB=3 cm, AB=2 cm implies collinear with A between M and B; net field is about 3.2e5 N/C, not 4.0e4 N/C."}
+{"case_id": "LD103", "flag": "gold_wrong_high_confidence", "reason": "Coulomb force vector sum using CA=10 cm, CB=8 cm, AB=9 cm gives about 1.48e-3 N; expected 1.480 N is off by 1000x."}
+{"case_id": "LD146", "flag": "gold_wrong_high_confidence", "reason": "Three equal charges 5e-6 C on equilateral triangle side 10 cm give sqrt(3) k q^2/a^2 ≈ 38.9 N; expected 3.89e-3 N is off by 1e4."}
+{"case_id": "LD294", "flag": "gold_wrong_high_confidence", "reason": "Symmetric dipole geometry with q_test=1e-8 C gives net force about 0.230 N; expected 0.230e-3 N is off by 1000x."}
+{"case_id": "LD303", "flag": "gold_wrong_high_confidence", "reason": "At the right-angle vertex of an isosceles right triangle, equal perpendicular fields combine by sqrt(2), giving about 5.64e6 V/m; expected 7.95e6 equals scalar 2E, not vector sum."}
+{"case_id": "LD024", "flag": "gold_wrong_high_confidence", "reason": "Vector Coulomb-force sum for the stated isosceles-right triangle and q3 target gives about 2.07 N; expected 6.04 N does not match the stated geometry/charges."}
+{"case_id": "LD054", "flag": "statement_missing_data", "reason": "Question asks force at C but does not give distances or position of C relative to A and B; the result is underdetermined."}
+{"case_id": "LD057", "flag": "statement_missing_data", "reason": "Question asks force at C but does not give distances or position of C relative to A and B; the result is underdetermined."}
+{"case_id": "LD062", "flag": "statement_ambiguous", "reason": "Distances place M outside segment AB, but expected value appears to assume a different placement/reference; statement is ambiguous for trusted scoring."}
+{"case_id": "LD342", "flag": "gold_wrong_high_confidence", "reason": "For the stated outside point near q2, vector superposition gives about 1.24e7 V/m; expected 5.625e6 V/m is inconsistent with the geometry."}
+{"case_id": "LD391", "flag": "gold_wrong_high_confidence", "reason": "Direct Coulomb calculation gives about 0.72 N for q=4 uC at 20 cm; expected 0.072 N is factor-10 low."}
+{"case_id": "LD395", "flag": "gold_wrong_high_confidence", "reason": "For an equilateral triangle, two equal 5e-6 C source charges at side 15 cm produce resultant field about 1.00e7 V/m; expected 5.77e6 V/m omits vector/component scaling."}
+{"case_id": "TD364", "flag": "gold_wrong_high_confidence", "reason": "Question asks capacitance. From Q=20 uC and U=5 V, C=4 uF; expected 100 has wrong quantity/unit."}
+{"case_id": "TD389", "flag": "gold_wrong_high_confidence", "reason": "Using F=Q^2/(2 eps0 A), Q=80 uC and A=50 cm^2 gives about 7.23e4 N, not 7.23e4 mN; expected is off by 1000x."}
+{"case_id": "TD392", "flag": "gold_wrong_high_confidence", "reason": "Physical electrostatic energy density is u=1/2 eps E^2. Expected value equals eps E^2 without the 1/2 factor."}
+{"case_id": "TD395", "flag": "gold_wrong_high_confidence", "reason": "Using F=Q^2/(2 eps0 A), Q=60 uC and A=100 cm^2 gives about 2.03e4 N, not 2.03e4 mN; expected is off by 1000x."}
+{"case_id": "TD398", "flag": "gold_wrong_high_confidence", "reason": "With eps_r=3, A=250 cm^2, d=0.5 mm, and U=50 V, W=1/2 eps0 eps_r A U^2/d is about 1.66 uJ; expected 1.66 nJ is off by 1000x."}

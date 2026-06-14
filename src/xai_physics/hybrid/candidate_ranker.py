@@ -51,8 +51,16 @@ def _intent_score(problem: str, schema: dict[str, Any]) -> float:
     score = 0.0
 
     asks_voltage = any(p in low for p in ["calculate the voltage", "find the voltage", "determine the voltage", "what is the voltage"])
-    asks_charge = "charge" in low and any(p in low for p in ["calculate", "what", "find", "stored", "accumulated", "maximum"]) and not asks_voltage
-    asks_capacitance = "capacitance" in low and any(p in low for p in ["calculate", "what", "find", "determine"]) and not asks_voltage
+    asks_charge = (
+        "charge" in low
+        and any(p in low for p in ["calculate", "what", "find", "determine", "stored", "accumulated", "maximum"])
+        and not asks_voltage
+    ) or bool(__import__("re").search(r"\b(?:find|determine|calculate)\s+(?:the\s+)?(?:value\s+of\s+)?q\s*\d*\b", low))
+    asks_capacitance = (
+        "capacitance" in low and any(p in low for p in ["calculate", "what", "find", "determine"]) and not asks_voltage
+    ) or bool(__import__("re").search(r"\b(?:find|determine|calculate)\s+c\s*(?:'|prime)?\b", low))
+    if asks_capacitance:
+        asks_charge = False
 
     if asks_voltage:
         score += 60 if "voltage" in qtypes else -80
@@ -74,7 +82,7 @@ def _intent_score(problem: str, schema: dict[str, Any]) -> float:
     )
     if zero_field_location:
         score += 65 if qtypes & {"distance", "position"} else -70
-    elif "electric field" in low and not any(p in low for p in ["electric field energy", "energy stored"]):
+    elif "electric field" in low and not asks_charge and not any(p in low for p in ["electric field energy", "energy stored"]):
         score += 30 if "electric_field" in qtypes else -40
 
     return score

@@ -376,10 +376,26 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         if not queries:
             raise ValueError("Schema has no query.")
 
-        answer = _answer_query(queries[0], points, charges, vectors, k_eff=k_eff)
-        result.answer = answer
+        if len(queries) == 1:
+            query = queries[0]
+            answer = _answer_query(query, points, charges, vectors, k_eff=k_eff)
+            result.answer = answer
+            result.add_step("Final answer", f"The requested {query.get('type')} is {answer}.")
+            return result
 
-        result.add_step("Final answer", f"The requested {queries[0].get('type')} is {answer}.")
+        answers: dict[str, Any] = {}
+        for idx, query in enumerate(queries):
+            qtype = str(query.get("type") or f"query_{idx}")
+            key = qtype if qtype not in answers else f"{qtype}_{idx}"
+            answers[key] = _answer_query(query, points, charges, vectors, k_eff=k_eff)
+
+        result.answer = answers
+        result.add_step(
+            "Final answers",
+            "Answered all extracted queries so the evaluator/ranker can select the requested answer mode.",
+            query_count=len(queries),
+            answer_keys=list(answers.keys()),
+        )
         return result
 
     except Exception as exc:

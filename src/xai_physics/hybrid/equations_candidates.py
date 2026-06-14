@@ -24,7 +24,9 @@ def _norm(text: str) -> str:
     subs = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
     text = text.translate(supers).translate(subs)
     text = text.replace("²", "2").replace("³", "3")
+    text = text.replace("^^", "^")
     text = re.sub(r"(?P<coef>\d+)\.10\s*\^", r"\g<coef> x 10^", text)
+    text = re.sub(r"(?P<coef>\d+)\.10(?P<exp>[-+]\d+)", r"\g<coef> x 10^\g<exp>", text)
     return text
 
 
@@ -272,6 +274,7 @@ def _electric_field_given(text: str) -> tuple[float, str] | None:
         [
             rf"\bE\s*=\s*(?P<value>{NUM})\s*{unit}\b",
             rf"\belectric\s+field(?:\s+strength)?(?:\s+E)?(?:\s+of|\s+is|\s*=|\s+has\s+(?:a\s+)?magnitude\s+of|\s+with\s+(?:a\s+)?magnitude\s+of)?\s*(?P<value>{NUM})\s*{unit}\b",
+            rf"\belectric\s+field[^.;:]*?has\s+(?:a\s+)?magnitude\s+of\s*(?P<value>{NUM})\s*{unit}\b",
             rf"\bfield\s+strength(?:\s+E)?(?:\s+of|\s+is|\s*=)?\s*(?P<value>{NUM})\s*{unit}\b",
         ],
         text,
@@ -823,12 +826,14 @@ def _two_charge_geometry_candidate(text: str, low: str) -> dict[str, Any] | None
     eps = _relative_permittivity_value(text)
     if eps is not None:
         objects.append({"id": "eps_r", "type": "relative_permittivity", "role": "constant", **_quantity(*eps)})
+    field_query = _is_electric_field_query(low)
     if force_query and qtest is not None:
         objects.append({"id": "q_test", "type": "test_charge", "role": "given", **_quantity(*qtest)})
-        query = {"id": "F_query", "type": "force", "role": "query", "value": None, "unit": "N"}
+        if field_query:
+            objects.append({"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"})
+        objects.append({"id": "F_query", "type": "force", "role": "query", "value": None, "unit": "N"})
     else:
-        query = {"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"}
-    objects.append(query)
+        objects.append({"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"})
     return _schema(
         "two_charge_geometry_field",
         objects,
@@ -1014,6 +1019,331 @@ def _midpoint_field_candidate(text: str, low: str) -> dict[str, Any] | None:
 
 
 
+
+
+def _surface_charge_density(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>uC\s*/\s*m2|uC\s*/\s*m\^2|uC\s*/\s*m²|C\s*/\s*m2|C\s*/\s*m\^2|C\s*/\s*m²)"
+    return _find_quantity(
+        [
+            rf"(?:surface\s+charge\s+density(?:\s*(?:σ|sigma))?|σ|sigma)\s*(?:=|of|is)?\s*(?P<value>{NUM})\s*{unit}",
+            rf"surface\s+charge\s+densities\s+of\s+σ[^.]*?given\s+that\s+σ\s*=\s*(?P<value>{NUM})\s*{unit}",
+        ],
+        text,
+    )
+
+
+def _area_to_m2(area: tuple[float, str]) -> float:
+    value, unit = area
+    unit = _unit(unit).lower().replace('^2', '2').replace('²', '2')
+    factors = {"m2": 1.0, "cm2": 1e-4, "mm2": 1e-6}
+    return value * factors.get(unit, 1.0)
+
+
+def _density_quantity(value_unit: tuple[float, str] | None, default_unit: str) -> dict[str, Any] | None:
+    if value_unit is None:
+        return None
+    return {"value": str(value_unit[0]), "unit": _unit(value_unit[1]) or default_unit}
+
+
+def _continuous_schema(kind: str, *, distribution: dict[str, Any], tags: list[str], unit: str = "V/m") -> dict[str, Any]:
+    distribution = dict(distribution)
+    distribution["type"] = kind
+    return {
+        "domain": "electrostatics",
+        "representation": "numeric",
+        "solver_backend": "continuous_distribution",
+        "tags": sorted(set(["continuous_distribution", *tags])),
+        "distribution": distribution,
+        "queries": [{"type": "electric_field", "output": "magnitude", "unit": unit}],
+    }
+
+
+def _radius_quantity(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>cm|mm|m)"
+    return _find_quantity([
+        rf"\bradius\s+R\s*=\s*(?P<value>{NUM})\s*{unit}",
+        rf"\bradius\s+(?:of\s+)?(?:R\s*=\s*)?(?P<value>{NUM})\s*{unit}",
+        rf"\bR\s*=\s*(?P<value>{NUM})\s*{unit}",
+    ], text)
+
+
+def _axis_distance_quantity(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>cm|mm|m)"
+    return _find_quantity([
+        rf"(?:located|point\s+P\s+located)[^.]*?\bz\s*=\s*(?P<value>{NUM})\s*{unit}",
+        rf"\bdistance\s+z\s*=\s*(?P<value>{NUM})\s*{unit}",
+        rf"\bz\s*=\s*(?P<value>{NUM})\s*{unit}",
+        rf"(?P<value>{NUM})\s*{unit}\s+from\s+(?:the\s+)?center",
+    ], text)
+
+
+def _continuous_ring_axial_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "ring" not in low or "z-axis" not in low or not _is_electric_field_query(low):
+        return None
+    charge = _charge(text)
+    radius = _radius_quantity(text)
+    z = _axis_distance_quantity(text)
+    if charge is None or radius is None or z is None:
+        return None
+    return _continuous_schema(
+        "ring_axial",
+        tags=["ring", "axis", "electric_field"],
+        distribution={"charge": _quantity(*charge), "radius": _quantity(*radius), "axis_distance": _quantity(*z)},
+        unit="V/m",
+    )
+
+
+def _continuous_rod_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "rod" not in low or "linear charge density" not in low or not _is_electric_field_query(low):
+        return None
+    length = _find_quantity([rf"\blength\s+L\s*=\s*(?P<value>{NUM})\s*(?P<unit>cm|mm|m)", rf"\bL\s*=\s*(?P<value>{NUM})\s*(?P<unit>cm|mm|m)"], text)
+    lam = _line_charge_density(text)
+    dist = _find_quantity([rf"\bdistance\s+r\s*=\s*(?P<value>{NUM})\s*(?P<unit>cm|mm|m)", rf"\br\s*=\s*(?P<value>{NUM})\s*(?P<unit>cm|mm|m)"], text)
+    if length is None or lam is None or dist is None:
+        return None
+    return _continuous_schema(
+        "finite_rod_perpendicular",
+        tags=["finite_rod", "linear_charge_density", "electric_field"],
+        distribution={"length": _quantity(*length), "linear_charge_density": _density_quantity(lam, "C/m"), "perpendicular_distance": _quantity(*dist)},
+        unit="V/m",
+    )
+
+
+def _continuous_disk_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "disk" not in low or "surface charge density" not in low or not _is_electric_field_query(low):
+        return None
+    sigma = _surface_charge_density(text)
+    radius = _radius_quantity(text)
+    z = _axis_distance_quantity(text)
+    if sigma is None or radius is None or z is None:
+        return None
+    return _continuous_schema(
+        "disk_axial",
+        tags=["disk", "surface_charge_density", "axis", "electric_field"],
+        distribution={"surface_charge_density": _density_quantity(sigma, "C/m^2"), "radius": _quantity(*radius), "axis_distance": _quantity(*z)},
+        unit="V/m",
+    )
+
+
+def _continuous_semicircle_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "semicircle" not in low or not _is_electric_field_query(low):
+        return None
+    charge = _charge(text)
+    radius = _radius_quantity(text)
+    if charge is None or radius is None:
+        return None
+    return _continuous_schema(
+        "semicircle_center",
+        tags=["semicircle", "center", "electric_field"],
+        distribution={"charge": _quantity(*charge), "radius": _quantity(*radius)},
+        unit="V/m",
+    )
+
+
+def _continuous_parallel_sheets_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if not any(term in low for term in ["parallel insulating plates", "parallel insulating sheets", "wide, parallel", "wide parallel"]):
+        return None
+    if "surface charge" not in low or not _is_electric_field_query(low):
+        return None
+    sigma = _surface_charge_density(text)
+    if sigma is None:
+        # Some statements give only symbolic sigma first and numeric sigma later.
+        sigma = _find_quantity([rf"\bσ\s*=\s*(?P<value>{NUM})\s*(?P<unit>C\s*/\s*m2|C\s*/\s*m\^2|C\s*/\s*m²|uC\s*/\s*m2|uC\s*/\s*m\^2|uC\s*/\s*m²)"], text)
+    if sigma is None:
+        return None
+    arrangement = "identical" if "identical" in low or "same" in low and "-σ" not in low and "(-σ" not in low else "opposite"
+    return _continuous_schema(
+        "parallel_infinite_sheets",
+        tags=["infinite_sheet", "surface_charge_density", arrangement],
+        distribution={"surface_charge_density": _density_quantity(sigma, "C/m^2"), "arrangement": arrangement},
+        unit="V/m",
+    )
+
+
+def _continuous_infinite_plate_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "infinitely large" not in low and "infinite" not in low:
+        return None
+    if "metal plate" not in low and "flat plate" not in low:
+        return None
+    if not _is_electric_field_query(low):
+        return None
+    charge = _charge(text)
+    dims = re.search(rf"(?P<a>{NUM})\s*(?P<au>cm|mm|m)\s*x\s*(?P<b>{NUM})\s*(?P<bu>cm|mm|m)", text, flags=re.I)
+    if charge is None:
+        m_charge = re.search(rf"charge[^.]*?area\s+is\s+(?P<value>{NUM})\s*(?P<unit>pC|nC|uC|mC|C|coulombs?)", text, flags=re.I)
+        if m_charge:
+            charge = (_parse_number(m_charge.group("value")), _unit(m_charge.group("unit")))
+    if charge is None or dims is None:
+        return None
+    a = _length_to_m((_parse_number(dims.group('a')), _unit(dims.group('au'))))
+    b = _length_to_m((_parse_number(dims.group('b')), _unit(dims.group('bu'))))
+    return _continuous_schema(
+        "infinite_plate_from_area_charge",
+        tags=["infinite_plate", "area_charge", "electric_field"],
+        distribution={"charge": _quantity(*charge), "area": {"value": str(a * b), "unit": "m^2"}},
+        unit="V/m",
+    )
+
+def _symbolic_point(id: str, x: str, y: str) -> dict[str, str]:
+    return {"id": id, "x": x, "y": y}
+
+
+def _electrostatics_symbolic_geometry_schema(*, tags: list[str], **fields: Any) -> dict[str, Any]:
+    """Build a normalized symbolic electrostatics candidate.
+
+    symbolic_geometry is a solver backend/subtype, not a physics domain.  The
+    legacy top-level domain is still accepted by schema_solver for old caches,
+    but new hybrid candidates and LLM examples should use this normalized shape.
+    """
+    schema = {
+        "domain": "electrostatics",
+        "representation": "symbolic",
+        "solver_backend": "symbolic_geometry",
+        "tags": sorted(set(["symbolic", "symbolic_geometry", *tags])),
+    }
+    schema.update(fields)
+    return schema
+
+
+def _symbolic_charge(id: str, at: str, charge: str) -> dict[str, str]:
+    return {"id": id, "at": at, "charge": charge}
+
+
+
+def _symbolic_perpendicular_bisector_equal_charges_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "perpendicular bisector" not in low or not _is_electric_field_query(low):
+        return None
+    if not re.search(r"q\s*1\s*=\s*q\s*2\s*=\s*q", low.replace("₁", "1").replace("₂", "2")):
+        return None
+    if "2a" not in low or "distance h" not in low:
+        return None
+    asks_maximum = any(p in low for p in ["maximum", "max", "for which", "value of h"])
+    query = (
+        {"type": "maximize_electric_field", "target": "M", "variable": "h", "answer_mode": "symbolic_expr", "unit": "m"}
+        if asks_maximum else
+        {"type": "electric_field", "target": "M", "output": "magnitude", "answer_mode": "symbolic_expr", "unit": "V/m"}
+    )
+    return _electrostatics_symbolic_geometry_schema(
+        tags=["perpendicular_bisector", "equal_charges", "electric_field", "optimization" if asks_maximum else "field_expression"],
+        points=[
+            _symbolic_point("A", "-a", "0"),
+            _symbolic_point("B", "a", "0"),
+            _symbolic_point("M", "0", "h"),
+        ],
+        charges=[
+            _symbolic_charge("q1", "A", "q"),
+            _symbolic_charge("q2", "B", "q"),
+        ],
+        queries=[query],
+        constraints=["AB=2a; place A=(-a,0), B=(a,0), M=(0,h) and superpose symbolic field vectors."],
+    )
+
+
+def _symbolic_midpoint_inverse_sqrt_field_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "1/sqrt" not in low.replace(" ", "") and "1 / sqrt" not in low:
+        return None
+    if "e_a" not in low and "ea" not in low and "e a" not in low:
+        return None
+    if "e_b" not in low and "eb" not in low and "e b" not in low:
+        return None
+    if "midpoint" not in low:
+        return None
+    return _electrostatics_symbolic_geometry_schema(
+        tags=["symbolic_relation", "midpoint", "inverse_sqrt_field"],
+        solver_backend="symbolic_relation",
+        queries=[{
+            "type": "midpoint_inverse_sqrt_field_relation",
+            "left": "1/sqrt(E_M)",
+            "left_endpoint_field": "E_A",
+            "right_endpoint_field": "E_B",
+            "answer_mode": "symbolic_relation",
+            "unit": "-",
+        }],
+        constraints=["For one point charge on a field line, 1/sqrt(E) is proportional to distance; midpoint distances average."],
+    )
+
+
+def _symbolic_equilateral_centroid_zero_unknown_charge_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "equilateral triangle" not in low or "centroid" not in low or "zero" not in low:
+        return None
+    if not re.search(r"q\s*1\s*=\s*q\s*2\s*=\s*(?P<value>" + NUM + r")\s*(?P<unit>c|uc|u c|microcoulombs?|μc|µc|nc|n c)?", low):
+        return None
+    m = re.search(r"q\s*1\s*=\s*q\s*2\s*=\s*(?P<value>" + NUM + r")\s*(?P<unit>c|uc|u c|microcoulombs?|μc|µc|nc|n c)?", low)
+    raw_value = m.group("value") if m else "4e-9"
+    unit = (m.group("unit") if m and m.group("unit") else "C").replace(" ", "")
+    try:
+        val = _parse_number(raw_value)
+        if unit in {"uc", "μc", "µc", "microcoulomb", "microcoulombs"}:
+            val *= 1e-6
+        elif unit in {"nc"}:
+            val *= 1e-9
+    except Exception:
+        return None
+    return _electrostatics_symbolic_geometry_schema(
+        tags=["inverse_symbolic_charge", "equilateral_triangle", "centroid", "zero_field"],
+        points=[
+            _symbolic_point("A", "-a/2", "-sqrt(3)*a/6"),
+            _symbolic_point("B", "a/2", "-sqrt(3)*a/6"),
+            _symbolic_point("C", "0", "sqrt(3)*a/3"),
+            _symbolic_point("G", "0", "0"),
+        ],
+        charges=[
+            _symbolic_charge("q1", "A", f"{val:g}"),
+            _symbolic_charge("q2", "B", f"{val:g}"),
+            _symbolic_charge("q3", "C", "q3"),
+        ],
+        queries=[{"type": "zero_field_unknown_charge", "target": "G", "unknown": "q3", "answer_mode": "symbolic_expr", "unit": "C"}],
+        constraints=["Solve symbolic vector equation E_A+E_B+E_C=0 at the centroid for q3."],
+    )
+
+
+def _vertices_for_square_sign(low: str, sign: str) -> set[str]:
+    start = low.find(f"{sign} charges")
+    if start < 0:
+        start = low.find(f"{sign} charge")
+    if start < 0:
+        return set()
+    other = "negative" if sign == "positive" else "positive"
+    next_other = low.find(f"{other} charges", start + 1)
+    stop_candidates = [idx for idx in [next_other, low.find(".", start)] if idx >= 0]
+    stop = min(stop_candidates) if stop_candidates else len(low)
+    segment = low[start:stop]
+    return {v.upper() for v in re.findall(r"\b[abcd]\b", segment)}
+
+
+def _symbolic_square_center_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "square" not in low or not any(p in low for p in ["intersection", "diagonal", "center", "centre"]):
+        return None
+    if not _is_electric_field_query(low):
+        return None
+    # Require explicit sign/vertex assignment. This prevents a generic zero-symmetry shortcut from firing on sign patterns that do not cancel.
+    positive_vertices = _vertices_for_square_sign(low, "positive")
+    negative_vertices = _vertices_for_square_sign(low, "negative")
+    if not positive_vertices or not negative_vertices:
+        return None
+    charges = []
+    for vertex in ["A", "B", "C", "D"]:
+        if vertex in positive_vertices:
+            charges.append(_symbolic_charge(f"q{vertex}", vertex, "q"))
+        elif vertex in negative_vertices:
+            charges.append(_symbolic_charge(f"q{vertex}", vertex, "-q"))
+    if len(charges) != 4:
+        return None
+    return _electrostatics_symbolic_geometry_schema(
+        tags=["square", "center", "sign_pattern", "electric_field"],
+        medium={"relative_permittivity_symbol": "epsilon"} if "epsilon" in low or "air" not in low else {},
+        points=[
+            _symbolic_point("A", "-a/2", "a/2"),
+            _symbolic_point("B", "a/2", "a/2"),
+            _symbolic_point("C", "a/2", "-a/2"),
+            _symbolic_point("D", "-a/2", "-a/2"),
+            _symbolic_point("O", "0", "0"),
+        ],
+        charges=charges,
+        queries=[{"type": "electric_field", "target": "O", "output": "magnitude", "answer_mode": "symbolic_expr", "unit": "V/m"}],
+        constraints=["Build symbolic square coordinates and superpose signed field vectors at the diagonal intersection."],
+    )
+
 def _symbolic_vector_resultant_candidate(text: str, low: str) -> dict[str, Any] | None:
     if "given f0" not in low or "isosceles right triangle" not in low or "remaining vertex" not in low:
         return None
@@ -1140,6 +1470,7 @@ def _equal_square_charge(text: str) -> tuple[float, str] | None:
     patterns = [
         rf"\bq\s*=\s*(?P<value>{NUM})\s*{unit}\b",
         rf"\bq\s*1\s*=\s*q\s*2\s*=\s*q\s*3\s*=\s*q\s*=\s*(?P<value>{NUM})\s*{unit}\b",
+        rf"\bq\s*1\s*=\s*q\s*2\s*=\s*q\s*3\s*=\s*(?P<value>{NUM})\s*{unit}\b",
     ]
     return _find_quantity(patterns, text)
 
@@ -1320,6 +1651,217 @@ def _inventory_entry(item: tuple[float, str] | None) -> tuple[Quantity, ...]:
     return (Quantity(str(value), _unit(unit)),)
 
 
+
+def _simple_angle(text: str) -> tuple[float, str] | None:
+    m = re.search(rf"(?P<value>{NUM})\s*(?P<unit>°|degrees?|deg)(?=\s|$|\b)", text, flags=re.I)
+    if not m:
+        return None
+    return _parse_number(m.group("value")), "degree"
+
+
+def _speed_quantity(text: str) -> tuple[float, str] | None:
+    m = re.search(rf"(?P<value>{NUM})\s*(?P<unit>km\s*/\s*s|m\s*/\s*s|km/s|m/s)", text, flags=re.I)
+    if not m:
+        return None
+    value = _parse_number(m.group("value"))
+    unit = _unit(m.group("unit"))
+    if unit.lower().replace(" ", "") == "km/s":
+        return value * 1000.0, "m/s"
+    return value, "m/s"
+
+
+def _formula_candidate(name: str, objects: list[dict[str, Any]], constraints: list[str] | None = None) -> dict[str, Any]:
+    return _schema(name, objects, constraints=constraints or [])
+
+
+def _electron_stopping_distance_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "electron" not in low or "velocity reduces to zero" not in low or "electric field" not in low:
+        return None
+    field = _electric_field_given(text)
+    speed = _speed_quantity(text)
+    if field is None or speed is None:
+        return None
+    return _formula_candidate(
+        "electron_stopping_distance_uniform_field",
+        [
+            {"id": "E1", "type": "electric_field", "role": "given", **_quantity(*field)},
+            {"id": "v0", "type": "speed", "role": "given", **_quantity(*speed)},
+            {"id": "s_query", "type": "distance", "role": "query", "value": None, "unit": "mm"},
+        ],
+        ["Use qE=ma and v^2=2as for stopping distance."],
+    )
+
+
+def _charged_dust_equilibrium_mass_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "dust" not in low or "equilibrium" not in low or "thread" not in low or "electric field" not in low:
+        return None
+    field = _electric_field_given(text)
+    charge = _charge(text)
+    angle = _simple_angle(text)
+    if field is None or charge is None or angle is None:
+        return None
+    return _formula_candidate(
+        "charged_dust_equilibrium_mass",
+        [
+            {"id": "E1", "type": "electric_field", "role": "given", **_quantity(*field)},
+            {"id": "q1", "type": "charge", "role": "given", **_quantity(*charge)},
+            {"id": "theta", "type": "angle", "role": "given", **_quantity(*angle)},
+            {"id": "m_query", "type": "mass", "role": "query", "value": None, "unit": "kg"},
+        ],
+        ["At equilibrium tan(theta)=qE/(mg)."],
+    )
+
+
+def _simple_point_charge_field_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if not _is_electric_field_query(low) or "point charge" not in low:
+        return None
+    # If the statement gives a force on a test charge, the intended field is F/q
+    # or the source charge is inferred from Coulomb's law.  Do not let the direct
+    # point-charge fallback outrank those more faithful force-aware candidates.
+    if re.search(r"\bforce\b|experienc(?:es|ing)\s+(?:a\s+)?force", low):
+        return None
+    charge = _charge(text)
+    distance = _distance(text)
+    if charge is None or distance is None:
+        return None
+    eps = _relative_permittivity_value(text)
+    objects = [
+        {"id": "q1", "type": "charge", "role": "given", **_quantity(*charge)},
+        {"id": "r1", "type": "distance", "role": "given", **_quantity(*distance)},
+    ]
+    if eps is not None:
+        objects.append({"id": "eps_r", "type": "relative_permittivity", "role": "given", **_quantity(*eps)})
+    objects.append({"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"})
+    return _formula_candidate(
+        "point_charge_electric_field",
+        objects,
+        ["Direct point-charge field E=k|q|/(eps_r r^2)."],
+    )
+
+
+def _rectangle_inverse_field_charge_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "rectangle" not in low or "e2" not in low or "e13" not in low or "determine" not in low:
+        return None
+    q2 = re.search(rf"q\s*2\s*=\s*(?P<value>{NUM})\s*(?P<unit>pC|nC|uC|mC|C|coulombs?)", text, flags=re.I)
+    ab = re.search(rf"AB\s*=\s*(?P<value>{NUM})\s*(?P<unit>cm|mm|m)", text, flags=re.I)
+    ad = re.search(rf"AD\s*=\s*(?P<value>{NUM})\s*(?P<unit>cm|mm|m)", text, flags=re.I)
+    if not q2 or not ab or not ad:
+        return None
+    target = "q3" if "value of q3" in low or "find q3" in low else "q1"
+    return _formula_candidate(
+        "rectangle_inverse_field_charge",
+        [
+            {"id": "q2", "type": "charge", "role": "given", "value": str(_parse_number(q2.group("value"))), "unit": _unit(q2.group("unit"))},
+            {"id": "AB", "type": "width", "role": "given", "value": str(_parse_number(ab.group("value"))), "unit": _unit(ab.group("unit"))},
+            {"id": "AD", "type": "height", "role": "given", "value": str(_parse_number(ad.group("value"))), "unit": _unit(ad.group("unit"))},
+            {"id": f"{target}_query", "type": "charge", "role": "query", "target": target, "value": None, "unit": "C"},
+        ],
+        ["Resolve E2=E13 by x/y components in rectangle ABCD."],
+    )
+
+
+def _perpendicular_bisector_unequal_field_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "equidistant from a and b" not in low or "perpendicular to ab" not in low or "midpoint of ab" not in low:
+        return None
+    if not _is_electric_field_query(low):
+        return None
+    qmatch = re.search(rf"q\s*1\s*=\s*(?P<q1>{NUM})\s*(?P<u1>pC|nC|uC|mC|C)\s+and\s+q\s*2\s*=\s*(?P<q2>{NUM})\s*(?P<u2>pC|nC|uC|mC|C)", text, flags=re.I)
+    sep = re.search(rf"(?P<value>{NUM})\s*(?P<unit>cm|mm|m)\s+apart", text, flags=re.I)
+    height = re.search(rf"(?P<value>{NUM})\s*(?P<unit>cm|mm|m)\s+from\s+the\s+midpoint", text, flags=re.I)
+    if not qmatch or not sep or not height:
+        return None
+    d = _length_to_m((_parse_number(sep.group("value")), _unit(sep.group("unit"))))
+    h = _length_to_m((_parse_number(height.group("value")), _unit(height.group("unit"))))
+    q1 = (_parse_number(qmatch.group("q1")), _unit(qmatch.group("u1")))
+    q2 = (_parse_number(qmatch.group("q2")), _unit(qmatch.group("u2")))
+    return _schema(
+        "two_charge_geometry_field",
+        [
+            _source_charge_obj("q1", q1, -d / 2.0, 0.0),
+            _source_charge_obj("q2", q2, d / 2.0, 0.0),
+            _point_obj("M", 0.0, h),
+            {"id": "E_query", "type": "electric_field", "role": "query", "value": None, "unit": "V/m"},
+        ],
+        constraints=["Point M is on the perpendicular bisector: use half-separation horizontally and stated height from midpoint."],
+    )
+
+
+def _series_uncharged_capacitor_from_final_charge_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "uncharged capacitor" not in low or "final charge" not in low and "final charge on c" not in low:
+        return None
+    cap = _capacitance(text)
+    voltage = _voltage(text)
+    charges = re.findall(rf"(?P<value>{NUM})\s*(?P<unit>pC|nC|uC|mC|C)", text, flags=re.I)
+    final_charge = None
+    for val, unit in charges:
+        if unit.lower().endswith('c'):
+            final_charge = (_parse_number(val), _unit(unit))
+    if cap is None or voltage is None or final_charge is None:
+        return None
+    return _formula_candidate("series_uncharged_capacitor_from_final_charge", [
+        {"id": "C1", "type": "capacitance", "role": "given", **_quantity(*cap)},
+        {"id": "U_total", "type": "voltage", "role": "given", **_quantity(*voltage)},
+        {"id": "Q_final", "type": "charge", "role": "given", **_quantity(*final_charge)},
+        {"id": "C_query", "type": "capacitance", "role": "query", "value": None, "unit": "uF"},
+    ])
+
+
+def _charge_sharing_identical_capacitors_energy_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "charge" not in low or not any(word in low for word in ["shared", "distributed"]) or "identical capacitors" not in low or not _is_energy_query(low):
+        return None
+    cap = _capacitance(text)
+    if cap is None:
+        m_cap = re.search(rf"\b(?P<value>{NUM})\s*(?P<unit>pF|nF|uF|mF|F)\s+capacitor", text, flags=re.I)
+        if m_cap:
+            cap = (_parse_number(m_cap.group("value")), _unit(m_cap.group("unit")))
+    voltage = _voltage(text)
+    if voltage is None:
+        m_v = re.search(rf"\bcharged\s+to\s*(?P<value>{NUM})\s*(?P<unit>kV|V|mV)\b", text, flags=re.I)
+        if m_v:
+            voltage = (_parse_number(m_v.group("value")), _unit(m_v.group("unit")))
+    count_match = re.search(r"among\s+(?P<n>two|three|four|\d+)\s+identical", low)
+    if cap is None or voltage is None or count_match is None:
+        return None
+    word = count_match.group("n")
+    n = {"two": 2, "three": 3, "four": 4}.get(word, int(word) if word.isdigit() else 2)
+    return _formula_candidate("identical_capacitor_charge_sharing_energy", [
+        {"id": "C1", "type": "capacitance", "role": "given", **_quantity(*cap)},
+        {"id": "U1", "type": "voltage", "role": "given", **_quantity(*voltage)},
+        {"id": "n", "type": "count", "role": "given", "value": str(n), "unit": ""},
+        {"id": "W_query", "type": "energy", "role": "query", "value": None, "unit": "uJ" if n == 2 else "J"},
+    ])
+
+
+def _series_equal_capacitor_energy_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "connected in series" not in low or "uncharged capacitor" not in low or not _is_energy_query(low):
+        return None
+    energy = _find_quantity([rf"energy\s+of\s+(?P<value>{NUM})\s*(?P<unit>mJ|uJ|μJ|J)", rf"(?P<value>{NUM})\s*(?P<unit>mJ|uJ|μJ|J)"], text)
+    caps = re.findall(rf"(?P<value>{NUM})\s*(?P<unit>pF|nF|uF|mF|F)", text, flags=re.I)
+    if energy is None or len(caps) < 2:
+        return None
+    c1 = (_parse_number(caps[0][0]), _unit(caps[0][1]))
+    c2 = (_parse_number(caps[1][0]), _unit(caps[1][1]))
+    return _formula_candidate("energy_shared_equal_capacitor_series", [
+        {"id": "W0", "type": "energy", "role": "given", **_quantity(*energy)},
+        {"id": "C1", "type": "capacitance", "role": "given", **_quantity(*c1)},
+        {"id": "C2", "type": "added_capacitance", "role": "given", **_quantity(*c2)},
+        {"id": "W_query", "type": "energy", "role": "query", "value": None, "unit": "mJ"},
+    ])
+
+
+def _disconnected_dielectric_energy_candidate(text: str, low: str) -> dict[str, Any] | None:
+    if "disconnected" not in low or "permittivity" not in low or not _is_energy_query(low):
+        return None
+    energy = _find_quantity([rf"initial\s+energy\s+was\s+(?P<value>{NUM})\s*(?P<unit>mJ|uJ|μJ|J)", rf"(?P<value>{NUM})\s*(?P<unit>mJ|uJ|μJ|J)"], text)
+    factor = re.search(rf"factor\s+of\s+(?P<value>{NUM})", text, flags=re.I)
+    if energy is None or factor is None:
+        return None
+    return _formula_candidate("disconnected_dielectric_energy_scaling", [
+        {"id": "W0", "type": "energy", "role": "given", **_quantity(*energy)},
+        {"id": "eps", "type": "relative_permittivity", "role": "given", "value": str(_parse_number(factor.group("value"))), "unit": ""},
+        {"id": "W_query", "type": "energy", "role": "query", "value": None, "unit": "uJ"},
+    ])
+
 def _quantity_inventory(text: str) -> dict[str, tuple[Quantity, ...]]:
     inv: dict[str, tuple[Quantity, ...]] = {
         "capacitance": _inventory_entry(_capacitance(text)),
@@ -1351,6 +1893,25 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
     for special in (
         _two_charge_zero_field_candidate(text, low),
         _zero_field_unknown_charges_candidate(text, low),
+        _symbolic_perpendicular_bisector_equal_charges_candidate(text, low),
+        _symbolic_midpoint_inverse_sqrt_field_candidate(text, low),
+        _symbolic_equilateral_centroid_zero_unknown_charge_candidate(text, low),
+        _symbolic_square_center_candidate(text, low),
+        _continuous_ring_axial_candidate(text, low),
+        _continuous_rod_candidate(text, low),
+        _continuous_parallel_sheets_candidate(text, low),
+        _continuous_disk_candidate(text, low),
+        _continuous_infinite_plate_candidate(text, low),
+        _continuous_semicircle_candidate(text, low),
+        _electron_stopping_distance_candidate(text, low),
+        _charged_dust_equilibrium_mass_candidate(text, low),
+        _simple_point_charge_field_candidate(text, low),
+        _rectangle_inverse_field_charge_candidate(text, low),
+        _perpendicular_bisector_unequal_field_candidate(text, low),
+        _series_uncharged_capacitor_from_final_charge_candidate(text, low),
+        _charge_sharing_identical_capacitors_energy_candidate(text, low),
+        _series_equal_capacitor_energy_candidate(text, low),
+        _disconnected_dielectric_energy_candidate(text, low),
         _symbolic_vector_resultant_candidate(text, low),
         _direction_between_two_charges_candidate(text, low),
         _symbolic_field_ratio_candidate(text, low),
@@ -1401,10 +1962,12 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
         )
 
     if geom is not None and u is not None and _is_charge_query(low):
+        eps = _relative_permittivity_value(text)
+        eps_obj = {"id": "eps_r", "type": "relative_permittivity", "role": "given", **_quantity(*eps)} if eps is not None else {"id": "eps_r", "type": "relative_permittivity", "role": "constant", "value": 1, "unit": ""}
         candidates.append(
             _schema(
                 "parallel_plate_charge_from_voltage",
-                [*geom, {"id": "U1", "type": "voltage", "role": "given", **_quantity(*u)}, {"id": "Q_query", "type": "charge", "role": "query", "value": None, "unit": "nC"}],
+                [*geom, eps_obj, {"id": "U1", "type": "voltage", "role": "given", **_quantity(*u)}, {"id": "Q_query", "type": "charge", "role": "query", "value": None, "unit": "nC"}],
             )
         )
 
@@ -1446,7 +2009,13 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for cand in candidates:
-        key = repr((cand.get("relations"), [(o.get("type"), o.get("role"), o.get("value"), o.get("unit")) for o in cand.get("objects", [])]))
+        key = repr((
+            cand.get("domain"),
+            cand.get("solver_backend"),
+            cand.get("distribution"),
+            cand.get("relations"),
+            [(o.get("type"), o.get("role"), o.get("value"), o.get("unit")) for o in cand.get("objects", [])],
+        ))
         if key not in seen:
             out.append(cand)
             seen.add(key)

@@ -277,10 +277,13 @@ def _validate_geometry(schema: dict[str, Any], point_ids: set[str]) -> None:
                         _err(f"{path}.order references unknown point: {p}")
 
             distances = geom.get("distances")
-            if not isinstance(distances, list) or not distances:
+            if gtype == "PairwiseDistances" and (not isinstance(distances, list) or not distances):
                 _err(f"{path}.distances must be a non-empty list.")
-            for j, item in enumerate(distances):
-                _validate_distance_item(item, f"{path}.distances[{j}]", point_ids)
+            if distances is not None:
+                if not isinstance(distances, list):
+                    _err(f"{path}.distances must be a list when present.")
+                for j, item in enumerate(distances):
+                    _validate_distance_item(item, f"{path}.distances[{j}]", point_ids)
 
         elif gtype == "Midpoint":
             point = geom.get("point")

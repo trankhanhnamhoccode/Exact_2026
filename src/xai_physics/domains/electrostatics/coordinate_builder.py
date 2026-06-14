@@ -119,6 +119,85 @@ def _collect_distances(schema: dict[str, Any]) -> dict[tuple[str, str], float]:
     return dist_map
 
 
+def _infer_distance_path_order(
+    points: list[str],
+    dist_map: dict[tuple[str, str], float],
+) -> list[str] | None:
+    """Infer a collinear chain when distances form an unambiguous path.
+
+    LLM schemas sometimes give collinear text as pairwise edges but put points
+    in the wrong order, for example A-B, B-C, A-M, C-N with order A-B-C-M-N.
+    The graph itself is the faithful source: M-A-B-C-N.  Only repair when the
+    graph is exactly a simple path so we do not reinterpret triangular data.
+    """
+    unique = list(dict.fromkeys(str(p) for p in points))
+    if len(unique) < 3:
+        return None
+
+    adjacency: dict[str, set[str]] = {p: set() for p in unique}
+    edge_count = 0
+    for i, a in enumerate(unique):
+        for b in unique[i + 1:]:
+            if (a, b) in dist_map:
+                adjacency[a].add(b)
+                adjacency[b].add(a)
+                edge_count += 1
+
+    if edge_count != len(unique) - 1:
+        return None
+
+    degrees = {p: len(neighbors) for p, neighbors in adjacency.items()}
+    endpoints = [p for p, deg in degrees.items() if deg == 1]
+    if len(endpoints) != 2 or any(deg > 2 or deg == 0 for deg in degrees.values()):
+        return None
+
+    start = endpoints[0]
+    order = [start]
+    previous: str | None = None
+    current = start
+    while True:
+        next_nodes = [p for p in adjacency[current] if p != previous]
+        if not next_nodes:
+            break
+        if len(next_nodes) != 1:
+            return None
+        previous, current = current, next_nodes[0]
+        order.append(current)
+
+    return order if len(order) == len(unique) else None
+
+
+def _place_collinear_order(
+    coords: dict[str, Vec2],
+    dist_map: dict[tuple[str, str], float],
+    order: list[str],
+) -> bool:
+    """Place a whole collinear chain atomically.
+
+    Older logic placed points incrementally and returned False when a later
+    adjacent edge was missing.  That left partial coordinates behind, so a
+    subsequent repair could not overwrite an inconsistent bad LLM order.  Build
+    into a temporary map first and commit only if every adjacent distance exists.
+    """
+    if len(order) < 2:
+        return False
+
+    old = dict(coords)
+    temp = dict(coords)
+    first = order[0]
+    # Inferred collinear chains are intended to be the geometry source of truth.
+    # Reset the chain origin so a previous failed placement cannot pin the wrong
+    # point at x=0.
+    temp[first] = Vec2(0.0, 0.0)
+    for left, right in zip(order, order[1:]):
+        if (left, right) not in dist_map:
+            return False
+        temp[right] = Vec2(temp[left].x + dist_map[(left, right)], temp[first].y)
+
+    coords.update({point: temp[point] for point in order})
+    return old != coords
+
+
 def _ensure_segment(
     coords: dict[str, Vec2],
     dist_map: dict[tuple[str, str], float],
@@ -288,6 +367,10 @@ def _build_pairwise(
     if len(points) == 2:
         return _ensure_segment(coords, dist_map, points[0], points[1])
 
+    path_order = _infer_distance_path_order([str(p) for p in points], dist_map)
+    if path_order is not None:
+        return _place_collinear_order(coords, dist_map, path_order)
+
     if len(points) >= 3:
         # Try every pair as anchor and every other point as the third point.
         for a_id in points:
@@ -342,18 +425,18 @@ def _build_collinear(
             coords[right] = Vec2(coords[center].x - d_right, coords[center].y)
             return old != coords
 
-    first = order[0]
-    if first not in coords:
-        coords[first] = Vec2(0.0, 0.0)
+    changed = _place_collinear_order(coords, dist_map, [str(p) for p in order])
+    if changed or all(str(p) in coords for p in order):
+        return changed
 
-    changed = False
+    repaired_order = _infer_distance_path_order([str(p) for p in geom.get("points", order)], dist_map)
+    if repaired_order is not None:
+        return _place_collinear_order(coords, dist_map, repaired_order)
+
     for left, right in zip(order, order[1:]):
         key = (left, right)
         if key not in dist_map:
             raise ValueError(f"Missing distance between adjacent points {left}-{right}.")
-        if right not in coords:
-            coords[right] = Vec2(coords[left].x + dist_map[key], coords[first].y)
-            changed = True
 
     return changed
 

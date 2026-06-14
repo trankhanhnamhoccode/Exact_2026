@@ -73,6 +73,8 @@ def _question_intent(question: str) -> str | None:
         return "force"
     if any(p in low for p in ["electric field", "field strength", "field intensity", "resultant electric field"]):
         return "electric_field"
+    if any(p in low for p in ["calculate the charge", "find the charge", "determine the charge", "charge on each plate", "charge stored"]):
+        return "charge"
     if any(p in low for p in ["dielectric constant", "relative permittivity"]):
         return "relative_permittivity"
     if "capacitance" in low:
@@ -109,17 +111,14 @@ def _unit_family(unit: str | None) -> str | None:
 
 def _predicted_family(predicted: Any) -> str | None:
     text = _text(predicted).lower().replace("μ", "u").replace("µ", "u")
-    if " n" in text or text.endswith("n"):
-        # Check field units first because N/C contains N.
-        if "n/c" in text:
-            return "electric_field"
-        return "force"
     if "v/m" in text or "n/c" in text:
         return "electric_field"
     if any(unit in text for unit in ["pf", "nf", "uf", "mf"]):
         return "capacitance"
     if any(unit in text for unit in ["pc", "nc", "uc", "mc"]):
         return "charge"
+    if " n" in text or text.endswith("n"):
+        return "force"
     if " v" in text or text.endswith("v"):
         return "voltage"
     if any(unit in text for unit in ["pj", "nj", "uj", "mj", " j"]):
@@ -218,9 +217,18 @@ def _classify_error(error: str | None, intent: str | None) -> tuple[str, str, st
     return "solve_failed_other", "low", err
 
 
-def build_taxonomy_report(replay_report: dict[str, Any], questions: dict[str, str]) -> dict[str, Any]:
+def build_taxonomy_report(
+    replay_report: dict[str, Any],
+    questions: dict[str, str],
+    *,
+    include_quality_flagged: bool = False,
+) -> dict[str, Any]:
     items: list[TaxonomyItem] = []
+    skipped_quality_flagged = 0
     for row in replay_report.get("results", []):
+        if row.get("quality_flag") and not include_quality_flagged:
+            skipped_quality_flagged += 1
+            continue
         case_id = str(row.get("case_id") or "")
         item = classify_failure(row, questions.get(case_id, ""))
         if item is not None:
@@ -235,6 +243,7 @@ def build_taxonomy_report(replay_report: dict[str, Any], questions: dict[str, st
 
     return {
         "total_failures": len(items),
+        "skipped_quality_flagged": skipped_quality_flagged,
         "by_category": dict(by_category.most_common()),
         "by_prefix": dict(by_prefix.most_common()),
         "by_category_prefix": dict(by_category_prefix),
@@ -274,11 +283,20 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--csv-out", type=Path)
     parser.add_argument("--id-column", default="id")
     parser.add_argument("--question-column", default="question")
+    parser.add_argument(
+        "--include-quality-flagged",
+        action="store_true",
+        help="Include failures that replay marked with a quality flag. By default gold/statement flags are skipped.",
+    )
     args = parser.parse_args(argv)
 
     replay_report = json.loads(args.replay_json.read_text(encoding="utf-8"))
     questions = _load_questions(args.dataset, id_column=args.id_column, question_column=args.question_column)
-    report = build_taxonomy_report(replay_report, questions)
+    report = build_taxonomy_report(
+        replay_report,
+        questions,
+        include_quality_flagged=args.include_quality_flagged,
+    )
 
     args.json_out.parent.mkdir(parents=True, exist_ok=True)
     args.json_out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -286,6 +304,8 @@ def main(argv: list[str] | None = None) -> None:
         write_taxonomy_csv(report, args.csv_out)
 
     print(f"failures: {report['total_failures']}")
+    if report.get("skipped_quality_flagged"):
+        print(f"skipped quality-flagged: {report['skipped_quality_flagged']}")
     print("top categories:")
     for category, count in list(report["by_category"].items())[:12]:
         print(f"  {count:4d}  {category}")

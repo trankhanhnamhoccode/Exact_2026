@@ -188,6 +188,8 @@ def _unit_factor(unit: str | None) -> float:
         "?N": 1e-6,
         "?N": 1e-6,
         "?N": 1e-6,
+        "m/s": 1.0,
+        "km/s": 1e3,
         "m/s2": 1.0,
         "m/s^2": 1.0,
         "m/s?": 1.0,
@@ -434,6 +436,58 @@ def _area_si(schema: dict[str, Any]) -> float:
     raise ValueError("Missing area or radius")
 
 
+def _parallel_plate_capacitance_from_geometry(schema: dict[str, Any]) -> float:
+    """Infer C = eps0*eps_r*A/d when C was not extracted explicitly."""
+    area = _area_si(schema)
+    d = _required_si(schema, ("distance", "length"), "m")
+    eps_r = _relative_permittivity(schema)
+    if d == 0:
+        raise ValueError("Plate separation must be non-zero.")
+    return EPS0 * eps_r * area / d
+
+
+def _trailing_index(obj: dict[str, Any] | None) -> str | None:
+    if not isinstance(obj, dict):
+        return None
+    match = re.search(r"(\d+)$", str(obj.get("id") or ""))
+    return match.group(1) if match else None
+
+
+def _series_voltage_for_capacitor(schema: dict[str, Any], target_obj: dict[str, Any] | None, total_voltage: float) -> float | None:
+    """Return voltage across one capacitor in a two-capacitor series stack.
+
+    LLM schemas sometimes ask for E1=U1/d1 while only extracting the total
+    source voltage. If C1/C2 and d1/d2 ids share a suffix, infer the matching
+    capacitor voltage by series voltage division.
+    """
+    caps = [
+        obj
+        for obj in _iter_unique_objects(schema)
+        if _type_matches(obj, "capacitance") and obj.get("role") != "query" and _has_value(obj)
+    ]
+    if len(caps) != 2:
+        return None
+
+    target_index = _trailing_index(target_obj)
+    if target_index is None:
+        return None
+
+    indexed = {_trailing_index(cap): cap for cap in caps if _trailing_index(cap) is not None}
+    if target_index not in indexed or len(indexed) != 2:
+        return None
+
+    target_cap = indexed[target_index]
+    other_caps = [cap for idx, cap in indexed.items() if idx != target_index]
+    if len(other_caps) != 1:
+        return None
+
+    c_target = _to_si_quantity(target_cap, "F")
+    c_other = _to_si_quantity(other_caps[0], "F")
+    if c_target <= 0 or c_other <= 0:
+        return None
+    return total_voltage * c_other / (c_target + c_other)
+
+
 def _answer_unit(query: dict[str, Any] | None, default_unit: str) -> str | None:
     unit: str | None = default_unit
     if query is not None and query.get("unit") not in (None, ""):
@@ -608,7 +662,13 @@ def _solve_capacitor_energy_voltage(schema: dict[str, Any], formula: str) -> Sol
 
     try:
         if w_query is not None:
-            c = _required_si(schema, "capacitance", "F")
+            cap_obj = _given_obj(schema, "capacitance")
+            if cap_obj is not None:
+                c = _to_si_quantity(cap_obj, "F")
+                capacitance_detail = "using extracted capacitance"
+            else:
+                c = _parallel_plate_capacitance_from_geometry(schema)
+                capacitance_detail = "using C = eps0*eps_r*A/d from extracted geometry"
             u = _required_si(schema, "voltage", "V")
             value = 0.5 * c * u * u
             query = w_query
@@ -638,12 +698,54 @@ def _solve_capacitor_energy_voltage(schema: dict[str, Any], formula: str) -> Sol
         return _fail(str(exc), formula)
 
     result = _new_result()
-    result.add_step("Formula selected", "Use capacitor energy formula W = 1/2*C*U^2.")
+    detail = "Use capacitor energy formula W = 1/2*C*U^2."
+    if w_query is not None and "capacitance_detail" in locals():
+        detail += f" Capacitance was obtained {capacitance_detail}."
+    result.add_step("Formula selected", detail)
     _set_numeric_answer(result, value, query, quantity_type, default_unit)
     return result
 
 
+def _solve_capacitor_energy_charge_voltage_sequence(schema: dict[str, Any], formula: str) -> SolveResult | None:
+    energy_queries = [obj for obj in _iter_unique_objects(schema) if _type_matches(obj, "energy") and obj.get("role") == "query"]
+    charge_givens = [obj for obj in _iter_unique_objects(schema) if _type_matches(obj, "charge") and obj.get("role") != "query" and _has_value(obj)]
+    voltage = _given_obj(schema, "voltage")
+    if len(energy_queries) < 2 or len(charge_givens) < 2 or voltage is None:
+        return None
+
+    try:
+        q1 = _to_si_quantity(charge_givens[0], "C")
+        q2 = _to_si_quantity(charge_givens[1], "C")
+        u1 = _to_si_quantity(voltage, "V")
+        if q1 == 0:
+            return None
+        w1 = 0.5 * q1 * u1
+        # Same capacitor: C is constant, so U and W scale with Q and Q^2.
+        w2 = w1 * (q2 / q1) ** 2
+        ratio = w1 / w2 if w2 != 0 else math.inf
+    except Exception:
+        return None
+
+    unit = energy_queries[0].get("unit") or "J"
+    answer = (
+        f"initial={_fmt(_from_si(w1, unit))} {unit}; "
+        f"final={_fmt(_from_si(w2, unit))} {unit}; "
+        f"decreases by {_fmt(ratio)} times"
+    )
+    result = _new_result()
+    result.answer = answer
+    result.add_step(
+        "Formula selected",
+        "For the same capacitor, capacitance is constant; with Q changed, energy scales as W proportional to Q^2.",
+    )
+    return result
+
+
 def _solve_capacitor_energy_charge_voltage(schema: dict[str, Any], formula: str) -> SolveResult:
+    sequence_result = _solve_capacitor_energy_charge_voltage_sequence(schema, formula)
+    if sequence_result is not None:
+        return sequence_result
+
     w_query = _query_obj(schema, "energy")
     q_query = _query_obj(schema, "charge")
     u_query = _query_obj(schema, "voltage")
@@ -818,16 +920,23 @@ def _solve_parallel_plate_field(schema: dict[str, Any], formula: str) -> SolveRe
         return _fail("No electric field query object for E = U/d.", formula)
 
     try:
-        u = _required_si(schema, "voltage", "V")
-        d = _required_si(schema, ("distance", "length"), "m")
+        u_total = _required_si(schema, "voltage", "V")
+        d_obj = _given_obj(schema, ("distance", "length"))
+        d = _to_si_quantity(d_obj, "m") if d_obj is not None else _required_si(schema, ("distance", "length"), "m")
         if d == 0:
             return _fail("Plate separation must be non-zero.", formula)
-        value = u / d
+        u_effective = _series_voltage_for_capacitor(schema, d_obj, u_total)
+        if u_effective is None:
+            u_effective = u_total
+            detail = "Use parallel-plate field E = U/d."
+        else:
+            detail = "Use series voltage division to get the capacitor voltage, then E = U_i/d_i."
+        value = u_effective / d
     except Exception as exc:
         return _fail(str(exc), formula)
 
     result = _new_result()
-    result.add_step("Formula selected", "Use parallel-plate field E = U/d.")
+    result.add_step("Formula selected", detail)
     _set_numeric_answer(result, value, query, "electric_field", "V/m")
     return result
 
@@ -2705,11 +2814,31 @@ def _solve_two_charge_geometry_field(schema: dict[str, Any], formula: str) -> So
         ex /= eps_r
         ey /= eps_r
         e_mag = math.sqrt(ex * ex + ey * ey)
+        force_value = None
         if force_query is not None:
             test = next((obj for obj in rel_objs if obj.get("type") in {"test_charge", "probe_charge"} and obj.get("role") == "given"), None)
             if test is None:
                 raise ValueError("Need test charge for force query.")
-            value = abs(_to_si_quantity(test, "C")) * e_mag
+            force_value = abs(_to_si_quantity(test, "C")) * e_mag
+        if field_query is not None and force_query is not None and force_value is not None:
+            field_display = _answer(e_mag, field_query, "electric_field", "V/m")
+            force_display = _answer(force_value, force_query, "force", "N")
+            result = _new_result()
+            result.add_step("Formula selected", "Build coordinates for A, B, and target M/C, superpose electric-field vectors, and return both field and force because the question asks for both.")
+            result.set_answer(
+                {"electric_field": field_display, "force": force_display},
+                AnswerEnvelope.numeric(
+                    display=field_display,
+                    value_si=e_mag,
+                    display_value=e_mag if _answer_unit(field_query, "V/m") in ("", None) else _from_si(e_mag, _answer_unit(field_query, "V/m")),
+                    unit=_answer_unit(field_query, "V/m"),
+                    quantity_type="electric_field",
+                    formula=formula,
+                ),
+            )
+            return result
+        if force_query is not None and force_value is not None:
+            value = force_value
             query = force_query
             qtype = "force"
             unit = "N"
@@ -4267,6 +4396,142 @@ def _canonical_formula(schema: dict[str, Any], formula: str) -> str:
 
     return key
 
+
+def _solve_electron_stopping_distance_uniform_field(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "distance") or _query_obj(schema, "length")
+    try:
+        efield = _required_si(schema, "electric_field", "V/m")
+        speed = _required_si(schema, "speed", "m/s")
+        if efield <= 0:
+            return _fail("Electric field must be positive.", formula)
+        electron_charge = 1.6e-19
+        electron_mass = 9.1e-31
+        accel = electron_charge * efield / electron_mass
+        value = speed * speed / (2.0 * accel)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "Use qE = ma and v^2 = 2as for an electron stopping in a uniform electric field.")
+    _set_numeric_answer(result, value, query, "distance", "mm", formula=formula)
+    return result
+
+
+def _solve_charged_dust_equilibrium_mass(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "mass")
+    try:
+        efield = _required_si(schema, "electric_field", "V/m")
+        charge = abs(_required_si(schema, "charge", "C"))
+        angle_obj = _given_obj(schema, "angle")
+        if angle_obj is None:
+            raise ValueError("Missing given object of type angle")
+        theta_value = _safe_numeric_expr(_raw_value(angle_obj))
+        theta_unit = _raw_unit(angle_obj, "degree").lower()
+        gravity_obj = _given_obj(schema, "gravity")
+        gravity = _to_si_quantity(gravity_obj, "m/s2") if gravity_obj is not None else G_DEFAULT
+        theta = theta_value if "rad" in theta_unit else math.radians(theta_value)
+        tan_theta = math.tan(theta)
+        if gravity == 0 or tan_theta == 0:
+            return _fail("Gravity and deflection angle must be non-zero.", formula)
+        value = charge * efield / (gravity * tan_theta)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "At equilibrium tan(theta)=qE/(mg), so m=qE/(g tan(theta)).")
+    _set_numeric_answer(result, value, query, "mass", "kg", formula=formula)
+    return result
+
+
+def _solve_rectangle_inverse_field_charge(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "charge")
+    try:
+        q2 = _required_si(schema, "charge", "C")
+        width = _required_si(schema, "width", "m")
+        height = _required_si(schema, "height", "m")
+        target = str((query or {}).get("target") or (query or {}).get("id") or "").lower()
+        diag = math.hypot(width, height)
+        if diag == 0:
+            return _fail("Rectangle diagonal must be non-zero.", formula)
+        if "q3" in target:
+            value = q2 * width**3 / diag**3
+        else:
+            value = q2 * height**3 / diag**3
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "Resolved vector condition E2=E13 into rectangle x/y components for the unknown vertex charge.")
+    _set_numeric_answer(result, value, query, "charge", "C", formula=formula)
+    return result
+
+
+def _solve_series_uncharged_capacitor_from_final_charge(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "capacitance")
+    try:
+        cap = _required_si(schema, "capacitance", "F")
+        total_voltage = _required_si(schema, "voltage", "V")
+        final_charge = _required_si(schema, "charge", "C")
+        v_existing = final_charge / cap
+        v_unknown = total_voltage - v_existing
+        if v_unknown <= 0:
+            return _fail("Final charge and known capacitance leave no positive voltage for the unknown capacitor.", formula)
+        value = final_charge / v_unknown
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "In series the final charge is common; V_unknown=V_total-Q/C_known and C_unknown=Q/V_unknown.")
+    _set_numeric_answer(result, value, query, "capacitance", "uF", formula=formula)
+    return result
+
+
+def _solve_identical_capacitor_charge_sharing_energy(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "energy")
+    try:
+        cap = _required_si(schema, "capacitance", "F")
+        voltage = _required_si(schema, "voltage", "V")
+        count = int(round(_required_scalar(schema, "count", "")))
+        if count <= 0:
+            return _fail("Capacitor count must be positive.", formula)
+        q_total = cap * voltage
+        q_each = q_total / count
+        value = count * q_each * q_each / (2.0 * cap)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "Total charge is shared equally among identical capacitors; sum q_i^2/(2C).")
+    _set_numeric_answer(result, value, query, "energy", "uJ", formula=formula)
+    return result
+
+
+def _solve_energy_shared_equal_capacitor_series(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "energy")
+    try:
+        initial_energy = _required_si(schema, "energy", "J")
+        cap = _required_si(schema, "capacitance", "F")
+        added_cap = _required_si(schema, "added_capacitance", "F")
+        factor = cap / (cap + added_cap)
+        value = initial_energy * factor
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "For adding an identical uncharged capacitor, the stored energy scales by C/(C+C_added).")
+    _set_numeric_answer(result, value, query, "energy", "mJ", formula=formula)
+    return result
+
+
+def _solve_disconnected_dielectric_energy_scaling(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema, "energy")
+    try:
+        initial_energy = _required_si(schema, "energy", "J")
+        factor = _required_scalar(schema, "relative_permittivity", "")
+        if factor == 0:
+            return _fail("Permittivity factor must be non-zero.", formula)
+        value = initial_energy / factor
+    except Exception as exc:
+        return _fail(str(exc), formula)
+    result = _new_result()
+    result.add_step("Formula selected", "For a disconnected capacitor charge stays constant, so W=Q^2/(2C) scales as 1/epsilon_r.")
+    _set_numeric_answer(result, value, query, "energy", "uJ", formula=formula)
+    return result
+
 def solve_schema(schema: dict[str, Any]) -> SolveResult:
     formula = _canonical_formula(schema, _formula_id(schema))
 
@@ -4360,6 +4625,13 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "electric_pendulum_deflection_angle": _solve_electric_pendulum_deflection_angle,
         "dielectric_field_scaling": _solve_dielectric_field_scaling,
         "midpoint_field_from_two_field_values": _solve_midpoint_field_from_two_field_values,
+        "electron_stopping_distance_uniform_field": _solve_electron_stopping_distance_uniform_field,
+        "charged_dust_equilibrium_mass": _solve_charged_dust_equilibrium_mass,
+        "rectangle_inverse_field_charge": _solve_rectangle_inverse_field_charge,
+        "series_uncharged_capacitor_from_final_charge": _solve_series_uncharged_capacitor_from_final_charge,
+        "identical_capacitor_charge_sharing_energy": _solve_identical_capacitor_charge_sharing_energy,
+        "energy_shared_equal_capacitor_series": _solve_energy_shared_equal_capacitor_series,
+        "disconnected_dielectric_energy_scaling": _solve_disconnected_dielectric_energy_scaling,
         "infinite_wire_electric_field": _solve_infinite_wire_electric_field,
         "percentage_relative_error": _solve_percentage_relative_error,
         "absolute_error_from_actual": _solve_absolute_error_from_actual,

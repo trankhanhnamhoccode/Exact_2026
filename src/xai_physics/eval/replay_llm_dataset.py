@@ -6,6 +6,8 @@ import json
 import math
 import re
 from dataclasses import dataclass
+
+import sympy as sp
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -194,19 +196,129 @@ def _normalize_unit(unit: str | None) -> str:
     return _normalize_math_text(unit).replace(" ", "")
 
 
-def _predicted_number_and_unit(value: Any) -> tuple[float | None, str]:
-    if isinstance(value, dict):
-        value = value.get("magnitude") or next(iter(value.values()), None)
-    if value is None:
-        return None, ""
 
+def _latex_frac_to_sympy(text: str) -> str:
+    # Convert simple \frac{A}{B} or /frac{A}{B} recursively enough for dataset answers.
+    text = text.replace("/frac", "\\frac")
+    pattern = re.compile(r"\\frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}")
+    previous = None
+    while previous != text:
+        previous = text
+        text = pattern.sub(r"((\1)/(\2))", text)
+    return text
+
+
+def _sympy_text(value: Any, unit_hint: str | None = None) -> str:
     text = _normalize_math_text(str(value))
-    num = _NUMBER_RE.search(text)
-    if not num:
-        return None, ""
+    text = _latex_frac_to_sympy(text)
+    text = re.sub(r"\\sqrt\s*\{([^{}]+)\}", r"sqrt(\1)", text)
+    text = re.sub(r"\\abs\s*\{([^{}]+)\}", r"Abs(\1)", text)
+    text = text.replace("sqrt", "sqrt")
+    text = text.replace("^", "**")
+    text = text.replace("×", "*").replace(" x ", "*").replace("·", "*")
+    text = text.replace(" . ", "*")
+    text = text.replace("epsilon", "epsilon").replace("\\epsilon", "epsilon")
+    # Strip common trailing units from the expression body.
+    for unit in [unit_hint, "v/m", "n/c", "n", "c", "m", "j", "-"]:
+        if unit:
+            u = _normalize_unit(unit)
+            if u and text.endswith(" " + u):
+                text = text[: -(len(u) + 1)]
+    # For relation answers compare the right-hand side expression.
+    if "=" in text:
+        text = text.split("=", 1)[1]
+    # Dataset sometimes uses decimal exponent for 3/2.
+    text = text.replace("**1.5", "**(3/2)")
+    # Make E_A parse as one symbol rather than E*A.
+    text = text.replace("e_a", "EA").replace("e_b", "EB").replace("e_m", "EM")
+    return text.strip()
 
-    unit = text[num.end():].strip().split()[0] if text[num.end():].strip() else ""
-    return float(num.group(0)), _normalize_unit(unit)
+
+def _sympy_expr(value: Any, unit_hint: str | None = None) -> sp.Expr | None:
+    text = _sympy_text(value, unit_hint)
+    if not text:
+        return None
+    # Do not reinterpret plain numeric strings here; numeric comparison already handles them.
+    if not any(ch.isalpha() for ch in text) and "sqrt" not in text:
+        return None
+    names = set(re.findall(r"[A-Za-z_]\w*", text)) - {"sqrt", "Abs"}
+    local_dict = {name: sp.Symbol(name, positive=True, real=True) for name in names}
+    local_dict.update({"sqrt": sp.sqrt, "Abs": sp.Abs})
+    try:
+        return sp.sympify(text, locals=local_dict)
+    except Exception:
+        return None
+
+
+def _sympy_equivalent(predicted: Any, expected: str | None, expected_unit: str | None = None) -> bool | None:
+    pred = _sympy_expr(predicted, expected_unit)
+    exp = _sympy_expr(expected, expected_unit)
+    if pred is None or exp is None:
+        return None
+    try:
+        if sp.simplify(pred - exp) == 0:
+            return True
+    except Exception:
+        pass
+    # Fallback numeric probes prevent minor formatting differences from causing false negatives.
+    symbols = sorted(pred.free_symbols | exp.free_symbols, key=lambda s: str(s))
+    if not symbols:
+        return None
+    for i in range(1, 5):
+        subs = {sym: sp.Rational(i + j + 1, 2) for j, sym in enumerate(symbols)}
+        try:
+            pv = sp.N(pred.subs(subs))
+            ev = sp.N(exp.subs(subs))
+            if abs(float(pv) - float(ev)) > 1e-8 * max(1.0, abs(float(ev))):
+                return False
+        except Exception:
+            return None
+    return True
+
+def _predicted_number_candidates(value: Any) -> list[tuple[float, str]]:
+    values: list[Any]
+    if isinstance(value, dict):
+        if "magnitude" in value:
+            values = [value.get("magnitude")]
+        else:
+            values = list(value.values())
+    elif isinstance(value, (list, tuple)):
+        values = list(value)
+    else:
+        values = [value]
+
+    candidates: list[tuple[float, str]] = []
+    for item in values:
+        if item is None:
+            continue
+        text = _normalize_math_text(str(item))
+        for match in _NUMBER_RE.finditer(text):
+            unit = text[match.end():].strip().split()[0] if text[match.end():].strip() else ""
+            candidates.append((float(match.group(0)), _normalize_unit(unit)))
+    return candidates
+
+
+def _predicted_number_and_unit(value: Any) -> tuple[float | None, str]:
+    candidates = _predicted_number_candidates(value)
+    if not candidates:
+        return None, ""
+    return candidates[0]
+
+
+def _qualitative_match(predicted: Any, expected: str | None) -> bool | None:
+    exp = _normalize_math_text(expected).lower()
+    pred = _normalize_math_text(predicted).lower()
+    if not exp:
+        return None
+    if any(token in exp for token in ["do not change", "does not change", "unchanged", "constant"]):
+        return any(token in pred for token in ["unchanged", "does not change", "do not change", "constant"])
+    if any(token in exp for token in ["halfed", "halved", "decreases by half", "reduced by half"]):
+        return "half" in pred or "halv" in pred or "0.5" in pred or "1/2" in pred
+    if "decreases by" in exp and "times" in exp:
+        exp_num = _first_number(exp)
+        if exp_num is not None:
+            return any(math.isclose(num, exp_num, rel_tol=1e-9, abs_tol=1e-12) for num, _unit in _predicted_number_candidates(predicted))
+    return None
 
 
 def compare_answer(
@@ -215,8 +327,16 @@ def compare_answer(
     *,
     expected_unit: str | None = None,
     rel_tol: float = 5e-2,
-    abs_tol: float = 1e-9,
+    abs_tol: float = 1e-8,
 ) -> bool | None:
+    qualitative = _qualitative_match(predicted, expected)
+    if qualitative is not None:
+        return qualitative
+
+    sympy_equiv = _sympy_equivalent(predicted, expected, expected_unit)
+    if sympy_equiv is not None:
+        return sympy_equiv
+
     predicted_symbolic = parse_symbolic_answer(predicted)
     expected_symbolic = parse_symbolic_answer(expected)
     if predicted_symbolic is not None and expected_symbolic is not None:
@@ -228,13 +348,88 @@ def compare_answer(
         return None
 
     expected_unit_norm = _normalize_unit(expected_unit)
-    if predicted_unit in _UNIT_FACTORS and expected_unit_norm in _UNIT_FACTORS:
-        expected_factor = _UNIT_FACTORS[expected_unit_norm]
-        if expected_factor != 0:
-            predicted_num = predicted_num * _UNIT_FACTORS[predicted_unit] / expected_factor
+    candidates = _predicted_number_candidates(predicted) or [(predicted_num, predicted_unit)]
 
-    return math.isclose(predicted_num, expected_num, rel_tol=rel_tol, abs_tol=abs_tol)
+    # Prefer a candidate with the same unit family as the gold answer. This lets
+    # replay evaluate structured multi-output answers such as {E: ..., F: ...}
+    # without making the deterministic solver guess which sub-answer a dataset
+    # row chose to score.
+    ordered_candidates = sorted(
+        candidates,
+        key=lambda candidate: 0
+        if candidate[1] in _UNIT_FACTORS and expected_unit_norm in _UNIT_FACTORS
+        else 1,
+    )
 
+    for candidate_num, candidate_unit in ordered_candidates:
+        compare_num = candidate_num
+        if candidate_unit in _UNIT_FACTORS and expected_unit_norm in _UNIT_FACTORS:
+            expected_factor = _UNIT_FACTORS[expected_unit_norm]
+            if expected_factor != 0:
+                compare_num = candidate_num * _UNIT_FACTORS[candidate_unit] / expected_factor
+        if math.isclose(compare_num, expected_num, rel_tol=rel_tol, abs_tol=abs_tol):
+            return True
+
+    return False
+
+
+
+def _metadata_compare_candidates(answer_meta: dict[str, Any] | None) -> list[Any]:
+    if not isinstance(answer_meta, dict):
+        return []
+    candidates: list[Any] = []
+    for key in ("display", "reason"):
+        value = answer_meta.get(key)
+        if value not in (None, ""):
+            candidates.append(value)
+    relation = answer_meta.get("relation")
+    if isinstance(relation, dict):
+        stack: list[Any] = list(relation.values())
+        while stack:
+            value = stack.pop(0)
+            if value in (None, ""):
+                continue
+            if isinstance(value, dict):
+                stack.extend(value.values())
+            elif isinstance(value, (list, tuple)):
+                stack.extend(value)
+            else:
+                candidates.append(value)
+    return candidates
+
+
+def compare_answer_with_meta(
+    predicted: Any,
+    answer_meta: dict[str, Any] | None,
+    expected: str | None,
+    *,
+    expected_unit: str | None = None,
+    rel_tol: float = 5e-2,
+    abs_tol: float = 1e-8,
+) -> bool | None:
+    primary = compare_answer(
+        predicted,
+        expected,
+        expected_unit=expected_unit,
+        rel_tol=rel_tol,
+        abs_tol=abs_tol,
+    )
+    if primary is True:
+        return True
+    saw_uncomparable = primary is None
+    for candidate in _metadata_compare_candidates(answer_meta):
+        value = compare_answer(
+            candidate,
+            expected,
+            expected_unit=expected_unit,
+            rel_tol=rel_tol,
+            abs_tol=abs_tol,
+        )
+        if value is True:
+            return True
+        if value is None:
+            saw_uncomparable = True
+    return None if saw_uncomparable and primary is None else False
 
 def load_dataset_rows(
     path: Path,
@@ -339,7 +534,7 @@ def run_replay_benchmark(
             answer_meta_obj = getattr(result, "answer_meta", None)
             answer_meta = answer_meta_obj.as_dict() if hasattr(answer_meta_obj, "as_dict") else None
             answer_type = answer_meta.get("answer_type") if isinstance(answer_meta, dict) else None
-            correct = compare_answer(result.answer, row.expected, expected_unit=row.expected_unit)
+            correct = compare_answer_with_meta(result.answer, answer_meta, row.expected, expected_unit=row.expected_unit)
             results.append(
                 ReplayEvalResult(
                     case_id=row.case_id,

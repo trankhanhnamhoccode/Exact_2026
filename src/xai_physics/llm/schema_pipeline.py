@@ -96,11 +96,21 @@ def _try_equations_hybrid_selection(
     formula_candidates = generate_equations_candidate_schemas(problem)
     domain = prompt_result.domain_decision.domain
     if domain not in {"equations", "electrostatics"}:
+        allowed_transition_formulas = {
+            "series_uncharged_capacitor_from_final_charge",
+            "identical_capacitor_charge_sharing_energy",
+            "energy_shared_equal_capacitor_series",
+            "disconnected_dielectric_energy_scaling",
+        }
         has_voltage_formula_candidate = any(
             any(obj.get("role") == "query" and obj.get("type") == "voltage" for obj in schema.get("objects", []))
             for schema in formula_candidates
         )
-        if not has_voltage_formula_candidate:
+        has_allowed_transition_formula = any(
+            any((rel.get("name") in allowed_transition_formulas) for rel in schema.get("relations", []) if isinstance(rel, dict))
+            for schema in formula_candidates
+        )
+        if not (has_voltage_formula_candidate or has_allowed_transition_formula):
             return None
     if domain != "equations" and not formula_candidates:
         return None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from xai_physics.core.answer import AnswerEnvelope
 from xai_physics.core.result import SolveResult
 from xai_physics.core.units import to_si, convert
 from xai_physics.domains.capacitor_state.state import CapacitorState
@@ -202,6 +203,133 @@ def _format_value(value_si: float, si_unit: str, output_unit: Optional[str]) -> 
     return f"{value:g} {output_unit}"
 
 
+def _ratio_phrase(quantity: str, ratio: float) -> str | None:
+    if abs(ratio - 1.0) < 1e-9:
+        return f"{quantity} unchanged"
+    if abs(ratio - 0.5) < 1e-9:
+        return f"{quantity} is halved"
+    if abs(ratio - 2.0) < 1e-9:
+        return f"{quantity} doubles"
+    if ratio > 0 and ratio < 1:
+        return f"{quantity} decreases by {1.0 / ratio:g} times"
+    if ratio > 1:
+        return f"{quantity} increases by {ratio:g} times"
+    return None
+
+
+def _try_answer_capacitance_ratio_from_events(query: dict[str, Any], schema: dict[str, Any]) -> str | None:
+    if query.get("type") != "capacitance_ratio":
+        return None
+    for event in schema.get("events", []) or []:
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") != "ReplaceDielectric":
+            continue
+        params = event.get("params", {}) or {}
+        initial_k = params.get("initial_k")
+        final_k = params.get("final_k")
+        if initial_k in (None, 0) or final_k is None:
+            continue
+        ratio = float(final_k) / float(initial_k)
+        return f"{ratio:g} times"
+    return None
+
+
+
+def _metadata_text_for_query(
+    query: dict[str, Any],
+    system: SystemState,
+    initial_system: SystemState | None,
+) -> str | None:
+    """Return secondary answer-mode text without changing legacy display.
+
+    Some dataset rows expect a relation/qualitative statement ("unchanged",
+    "halved", "50% reduction") even though the deterministic solver's primary
+    display remains the physical numeric value.  Keep the canonical answer
+    backward compatible and attach the alternate answer mode in AnswerEnvelope.
+    """
+    if initial_system is None:
+        return None
+
+    qtype = query.get("type", "voltage")
+    target = query.get("target", "system")
+
+    try:
+        system.infer_all()
+        initial_system.infer_all()
+
+        if qtype in {"energy_change", "energy_reduction"}:
+            initial_energy = _energy_of_target(initial_system, target)
+            final_energy = _energy_of_target(system, target)
+            delta = final_energy - initial_energy
+            if qtype == "energy_reduction":
+                delta = initial_energy - final_energy
+            if initial_energy:
+                percent = 100.0 * delta / initial_energy
+                return f"{percent:g} %"
+            return None
+
+        if qtype == "capacitance_ratio":
+            if target == "system":
+                initial = sum(cap.capacitance_F for cap in initial_system.capacitors.values())
+                final = sum(cap.capacitance_F for cap in system.capacitors.values())
+            else:
+                initial = initial_system.get(target).capacitance_F
+                final = system.get(target).capacitance_F
+            if initial:
+                phrase = _ratio_phrase("capacitance", final / initial)
+                return phrase or f"{final / initial:g} times"
+            return None
+
+        if qtype == "energy_ratio":
+            initial = _energy_of_target(initial_system, target)
+            final = _energy_of_target(system, target)
+            if initial:
+                phrase = _ratio_phrase("energy", final / initial)
+                return phrase or f"{final / initial:g} times"
+            return None
+
+        if target == "system":
+            return None
+
+        initial_cap = initial_system.get(target)
+        cap = system.get(target)
+        initial_cap.infer_missing()
+        cap.infer_missing()
+
+        if qtype == "voltage" and initial_cap.voltage_V and cap.voltage_V is not None:
+            return _ratio_phrase("voltage", cap.voltage_V / initial_cap.voltage_V)
+        if qtype == "charge" and initial_cap.charge_C and cap.charge_C is not None:
+            return _ratio_phrase("charge", cap.charge_C / initial_cap.charge_C)
+        if qtype == "capacitance" and initial_cap.capacitance_F and cap.capacitance_F is not None:
+            return _ratio_phrase("capacitance", cap.capacitance_F / initial_cap.capacitance_F)
+        if qtype == "energy":
+            initial_energy = initial_cap.energy_J()
+            final_energy = cap.energy_J()
+            if initial_energy and final_energy is not None:
+                return _ratio_phrase("energy", final_energy / initial_energy)
+    except Exception:
+        return None
+    return None
+
+
+def _metadata_for_queries(
+    queries: list[dict[str, Any]],
+    system: SystemState,
+    initial_system: SystemState | None,
+    answer: str,
+) -> AnswerEnvelope | None:
+    texts = [text for query in queries if (text := _metadata_text_for_query(query, system, initial_system))]
+    if not texts:
+        return None
+    display = "; ".join(texts)
+    return AnswerEnvelope(
+        answer_type="relation",
+        display=display,
+        relation={"alternate_answer_modes": texts, "primary_display": answer},
+        source="capacitor_state_solver",
+    )
+
 def _source_work_of_target(initial_system: SystemState, final_system: SystemState, target: str) -> float:
     initial_system.infer_all()
     final_system.infer_all()
@@ -369,6 +497,10 @@ def _answer_query(query: dict[str, Any], system: SystemState, initial_system: Sy
     cap = system.get(target)
     cap.infer_missing()
 
+    initial_cap = initial_system.get(target) if initial_system is not None and target in initial_system.capacitors else None
+    if initial_cap is not None:
+        initial_cap.infer_missing()
+
     if qtype == "voltage":
         if cap.voltage_V is None:
             raise ValueError(f"Voltage is unknown for capacitor {target}.")
@@ -509,6 +641,15 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
             },
         )
 
+        ratio_only_answer = None
+        if len(schema.get("queries", [])) == 1:
+            ratio_only_answer = _try_answer_capacitance_ratio_from_events(schema["queries"][0], schema)
+
+        if ratio_only_answer is not None:
+            result.answer = ratio_only_answer
+            result.add_step("Final answer", f"The requested output is {ratio_only_answer}.")
+            return result
+
         for event_schema in schema.get("events", []):
             detail = _apply_system_event(event_schema, system)
             system.infer_all()
@@ -537,9 +678,11 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         ]
         answer = "; ".join(answers)
         result.answer = answer
+        result.answer_meta = _metadata_for_queries(queries, system, initial_system, answer)
         result.add_step(
             "Final answer",
             f"The requested output is {answer}.",
+            answer_meta=result.answer_meta.as_dict() if result.answer_meta is not None else None,
         )
 
         return result

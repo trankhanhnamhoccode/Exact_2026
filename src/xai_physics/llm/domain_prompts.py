@@ -510,6 +510,165 @@ Use when two charges are at known distances from M and the electric fields at M 
   ]
 }
 
+
+============================================================
+SYMBOLIC REPRESENTATION MODE
+============================================================
+
+Symbolic is a representation/answer mode, not a separate physics domain.
+Use it when the requested answer must keep variables such as a, h, q, E_A, E_B,
+epsilon, or when the question asks for an expression, relation, optimum, or
+unknown symbolic charge condition. Do not replace symbolic variables with fake
+numbers. Keep variables as strings in coordinates, quantities, charges, and
+queries.
+
+For electrostatics symbolic geometry, keep the physics domain and mark the
+solver backend/subtype explicitly:
+
+{
+  "domain": "electrostatics",
+  "representation": "symbolic",
+  "solver_backend": "symbolic_geometry",
+  "tags": ["symbolic", "symbolic_geometry"],
+  ...
+}
+
+Use answer_mode in each query:
+- "symbolic_expr" for formulas such as E(h), h=a/sqrt(2), q3.
+- "symbolic_relation" for equations/relations such as 1/sqrt(E_M)=...
+- "direction" for directional symbolic answers.
+
+A) Equal charges on perpendicular bisector, AB = 2a, M distance h:
+
+{
+  "domain": "electrostatics",
+  "representation": "symbolic",
+  "solver_backend": "symbolic_geometry",
+  "tags": ["symbolic", "symbolic_geometry", "perpendicular_bisector", "equal_charges"],
+  "points": [
+    {"id": "A", "x": "-a", "y": "0"},
+    {"id": "B", "x": "a", "y": "0"},
+    {"id": "M", "x": "0", "y": "h"}
+  ],
+  "charges": [
+    {"id": "q1", "charge": "q", "at": "A"},
+    {"id": "q2", "charge": "q", "at": "B"}
+  ],
+  "queries": [
+    {"type": "electric_field", "target": "M", "output": "magnitude", "answer_mode": "symbolic_expr", "unit": "V/m"}
+  ]
+}
+
+If the question asks for h that maximizes the field, use:
+
+{"type": "maximize_electric_field", "target": "M", "variable": "h", "answer_mode": "symbolic_expr", "unit": "m"}
+
+B) Square center/intersection symbolic sign pattern. Do not assume zero; preserve
+the signs at vertices and let vector superposition decide cancellation:
+
+{
+  "domain": "electrostatics",
+  "representation": "symbolic",
+  "solver_backend": "symbolic_geometry",
+  "tags": ["symbolic", "symbolic_geometry", "square", "center", "sign_pattern"],
+  "medium": {"relative_permittivity_symbol": "epsilon"},
+  "points": [
+    {"id": "A", "x": "-a/2", "y": "a/2"},
+    {"id": "B", "x": "a/2", "y": "a/2"},
+    {"id": "C", "x": "a/2", "y": "-a/2"},
+    {"id": "D", "x": "-a/2", "y": "-a/2"},
+    {"id": "O", "x": "0", "y": "0"}
+  ],
+  "charges": [
+    {"id": "qA", "charge": "q", "at": "A"},
+    {"id": "qD", "charge": "q", "at": "D"},
+    {"id": "qB", "charge": "-q", "at": "B"},
+    {"id": "qC", "charge": "-q", "at": "C"}
+  ],
+  "queries": [
+    {"type": "electric_field", "target": "O", "output": "magnitude", "answer_mode": "symbolic_expr", "unit": "V/m"}
+  ]
+}
+
+C) Symbolic relation query for midpoint on a point-charge field line. This is
+symbolic electrostatics but not necessarily a coordinate geometry problem:
+
+{
+  "domain": "electrostatics",
+  "representation": "symbolic",
+  "solver_backend": "symbolic_relation",
+  "tags": ["symbolic", "symbolic_relation", "midpoint", "inverse_sqrt_field"],
+  "queries": [
+    {
+      "type": "midpoint_inverse_sqrt_field_relation",
+      "left": "1/sqrt(E_M)",
+      "left_endpoint_field": "E_A",
+      "right_endpoint_field": "E_B",
+      "answer_mode": "symbolic_relation",
+      "unit": "-"
+    }
+  ]
+}
+
+============================================================
+CONTINUOUS DISTRIBUTION MODE
+============================================================
+
+Use solver_backend "continuous_distribution" for charged objects whose charge is
+distributed over a ring, rod, disk, semicircle, infinite sheet, or large plate.
+Do not collapse these objects into a point charge unless the problem explicitly
+asks for far-field approximation. Keep the physics domain as electrostatics.
+
+A) Ring axial field:
+
+{
+  "domain": "electrostatics",
+  "representation": "numeric",
+  "solver_backend": "continuous_distribution",
+  "tags": ["continuous_distribution", "ring", "axis"],
+  "distribution": {
+    "type": "ring_axial",
+    "charge": {"value": 3, "unit": "uC"},
+    "radius": {"value": 5, "unit": "cm"},
+    "axis_distance": {"value": 2.5, "unit": "cm"}
+  },
+  "queries": [{"type": "electric_field", "output": "magnitude", "unit": "V/m"}]
+}
+
+B) Parallel infinite sheets/plates:
+
+{
+  "domain": "electrostatics",
+  "representation": "numeric",
+  "solver_backend": "continuous_distribution",
+  "tags": ["continuous_distribution", "infinite_sheet", "surface_charge_density"],
+  "distribution": {
+    "type": "parallel_infinite_sheets",
+    "surface_charge_density": {"value": 8.85e-6, "unit": "C/m^2"},
+    "arrangement": "opposite"
+  },
+  "queries": [{"type": "electric_field", "output": "magnitude", "unit": "V/m"}]
+}
+
+Use arrangement "opposite" for sigma and -sigma; use "identical" for same-sign
+sheets when the point is between them.
+
+C) Disk axial field:
+
+{
+  "domain": "electrostatics",
+  "representation": "numeric",
+  "solver_backend": "continuous_distribution",
+  "tags": ["continuous_distribution", "disk", "axis"],
+  "distribution": {
+    "type": "disk_axial",
+    "surface_charge_density": {"value": 5e-6, "unit": "C/m^2"},
+    "radius": {"value": 10, "unit": "cm"},
+    "axis_distance": {"value": 5, "unit": "cm"}
+  },
+  "queries": [{"type": "electric_field", "output": "magnitude", "unit": "V/m"}]
+}
+
 ============================================================
 QUERY RULES
 ============================================================
@@ -607,5 +766,3 @@ DOMAIN_PROMPTS = {
     "electrostatics": ELECTROSTATICS_PROMPT,
     "equations": EQUATIONS_PROMPT,
 }
-
-
