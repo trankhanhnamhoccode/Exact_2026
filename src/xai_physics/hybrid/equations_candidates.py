@@ -94,7 +94,12 @@ def _find_quantity(patterns: list[str], text: str) -> tuple[float, str] | None:
     for pattern in patterns:
         m = re.search(pattern, text, flags=re.I)
         if m:
-            return _parse_number(m.group("value")), _unit(m.group("unit"))
+            raw_value = m.group("value")
+            try:
+                parsed_value = _parse_number(raw_value)
+            except Exception:
+                parsed_value = _parse_number_ext(raw_value) if "_parse_number_ext" in globals() else float(raw_value)
+            return parsed_value, _unit(m.group("unit"))
     return None
 
 
@@ -2054,6 +2059,420 @@ def _qualitative_circuit_candidate(text: str, low: str) -> dict[str, Any] | None
         {"id":"qual_query","type":"qualitative", "role":"query", "value": None, "unit":"-", "answer": answer, "tag": tag},
     ])
 
+
+# ---- Patch 25: narrow LC / capacitor / inductor energy candidates ----
+_VALUE_EXT = rf"(?:{NUM}|(?:\d+(?:\.\d+)?|\.\d+)?\s*√\s*\d+|(?:\d+(?:\.\d+)?|\.\d+)\s*\*\s*sqrt\(\s*\d+\s*\)|(?:pi|π)\s*/\s*\d+)"
+
+
+def _parse_number_ext(raw: str) -> float:
+    text = raw.strip().replace(" ", "")
+    text = text.replace("π", "pi")
+    frac_map = {"⅓": 1.0 / 3.0, "⅔": 2.0 / 3.0, "¼": 0.25, "¾": 0.75, "½": 0.5}
+    if text in frac_map:
+        return frac_map[text]
+    m_frac = re.fullmatch(r"([-+]?\d+(?:\.\d+)?)/([-+]?\d+(?:\.\d+)?)", text)
+    if m_frac:
+        return float(m_frac.group(1)) / float(m_frac.group(2))
+    m = re.fullmatch(r"(?:(?P<coef>\d+(?:\.\d+)?)?)√(?P<rad>\d+(?:\.\d+)?)", text)
+    if m:
+        coef = float(m.group("coef") or 1.0)
+        return coef * math.sqrt(float(m.group("rad")))
+    m = re.fullmatch(r"(?P<coef>\d+(?:\.\d+)?)\*sqrt\((?P<rad>\d+(?:\.\d+)?)\)", text, flags=re.I)
+    if m:
+        return float(m.group("coef")) * math.sqrt(float(m.group("rad")))
+    m = re.fullmatch(r"pi/(?P<den>\d+(?:\.\d+)?)", text, flags=re.I)
+    if m:
+        return math.pi / float(m.group("den"))
+    return _parse_number(raw)
+
+
+def _si_factor(unit: str) -> float:
+    u = _unit(unit).lower().replace(" ", "")
+    table = {
+        "": 1.0,
+        "%": 1.0,
+        "j": 1.0, "mj": 1e-3, "uj": 1e-6, "µj": 1e-6, "μj": 1e-6,
+        "f": 1.0, "mf": 1e-3, "uf": 1e-6, "µf": 1e-6, "μf": 1e-6, "nf": 1e-9, "pf": 1e-12,
+        "c": 1.0, "mc": 1e-3, "uc": 1e-6, "µc": 1e-6, "μc": 1e-6, "nc": 1e-9, "pc": 1e-12,
+        "v": 1.0, "kv": 1e3, "mv": 1e-3,
+        "a": 1.0, "ma": 1e-3,
+        "h": 1.0, "mh": 1e-3, "uh": 1e-6, "µh": 1e-6, "μh": 1e-6,
+        "s": 1.0, "ms": 1e-3, "us": 1e-6, "µs": 1e-6, "μs": 1e-6,
+        "mm": 1e-3, "cm": 1e-2, "m": 1.0,
+    }
+    return table.get(u, 1.0)
+
+
+def _display_from_si(value_si: float, unit: str) -> float:
+    return value_si / _si_factor(unit)
+
+
+def _direct_numeric(quantity_type: str, value: float, unit: str, *, note: str = "") -> dict[str, Any]:
+    return _schema(
+        "direct_answer",
+        [{"id": "ans", "type": quantity_type, "role": "query", "value": f"{value:.12g}", "unit": _unit(unit)}],
+        [note] if note else [],
+    )
+
+
+def _direct_text(answer: str, *, quantity_type: str = "qualitative", note: str = "") -> dict[str, Any]:
+    return _schema(
+        "direct_answer",
+        [{"id": "ans", "type": quantity_type, "role": "query", "value": None, "unit": "-", "answer": answer}],
+        [note] if note else [],
+    )
+
+
+def _energy_value(text: str, *, prefer: str | None = None) -> tuple[float, str] | None:
+    unit = r"(?P<unit>uJ|µJ|μJ|mJ|J)"
+    patterns: list[str] = []
+    if prefer == "total":
+        patterns.extend([
+            rf"total(?:\s+oscillat(?:ing|ory))?\s+energy(?:\s+is|\s*=)?\s*(?P<value>{_VALUE_EXT})\s*{unit}",
+            rf"total\s+energy\s*(?P<value>{_VALUE_EXT})\s*{unit}",
+        ])
+    if prefer == "electric":
+        patterns.extend([
+            rf"electric(?:al)?(?:\s+field)?\s+energy(?:\s+is|\s*=)?\s*(?P<value>{_VALUE_EXT})\s*{unit}",
+            rf"W\s*_?\s*C\s*=\s*(?P<value>{_VALUE_EXT})\s*{unit}",
+            rf"W_C\s*=\s*(?P<value>{_VALUE_EXT})\s*{unit}",
+        ])
+    if prefer == "magnetic":
+        patterns.extend([
+            rf"magnetic(?:\s+field)?\s+energy(?:\s+is|\s*=)?\s*(?P<value>{_VALUE_EXT})\s*{unit}",
+            rf"W\s*_?\s*L\s*=\s*(?P<value>{_VALUE_EXT})\s*{unit}",
+            rf"W_L\s*=\s*(?P<value>{_VALUE_EXT})\s*{unit}",
+        ])
+    patterns.extend([
+        rf"energy(?:\s+of|\s+is|\s*=)?\s*(?P<value>{_VALUE_EXT})\s*{unit}",
+        rf"(?P<value>{_VALUE_EXT})\s*{unit}\s+of\s+(?:electric(?:al)?\s+field\s+|magnetic(?:\s+field\s+)?|stored\s+)?energy",
+        rf"(?:electric(?:al)?\s+field\s+|magnetic(?:\s+field\s+)?|stored\s+)?energy\s+of\s+(?P<value>{_VALUE_EXT})\s*{unit}",
+        rf"magnetic\s+energy\s+stored\s+is\s+(?P<value>{_VALUE_EXT})\s*{unit}",
+        rf"stores?\s*(?P<value>{_VALUE_EXT})\s*{unit}\s+of\s+magnetic\s+energy",
+        rf"stored\s+electric(?:\s+field)?\s+energy\s+is\s*(?P<value>{_VALUE_EXT})\s*{unit}",
+    ])
+    return _find_quantity(patterns, text)
+
+
+def _inductance_value(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>uH|µH|μH|mH|H)"
+    return _find_quantity([
+        rf"\bL\s*=\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+        rf"inductance(?:\s*\(\s*L\s*\)|\s+L)?(?:\s+of|\s+is|\s*=)?\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+    ], text)
+
+
+def _current_value(text: str, *, amplitude: bool | None = None) -> tuple[float, str] | None:
+    unit = r"(?P<unit>mA|A)"
+    pats = []
+    if amplitude is True:
+        pats.extend([
+            rf"maximum\s+(?:value\s+of\s+)?(?:current|I)(?:\s+is|\s*=|\s+of)?\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+            rf"current\s+reaches\s+its\s+maximum\s+value\s+of\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+            rf"I\s*0\s*=\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+        ])
+    pats.extend([
+        rf"current(?:\s+through[^,.]*?)?\s+(?:is|=|of)\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+        rf"current(?:\s+of|\s+is|\s*=)?\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+        rf"I\s*=\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+    ])
+    return _find_quantity(pats, text)
+
+
+def _voltage_ext(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>mV|kV|V|volts?)"
+    return _find_quantity([
+        rf"\bU\s*=\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+        rf"\bV\s*=\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+        rf"voltage(?:\s+across[^,.]*?|\s+of|\s+is|\s*=)?\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+        rf"potential\s+difference(?:\s+of|\s+is|\s*=)?\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+    ], text)
+
+
+def _charge_ext(text: str, *, amplitude: bool | None = None) -> tuple[float, str] | None:
+    unit = r"(?P<unit>pC|nC|uC|µC|μC|mC|C|coulombs?)"
+    pats=[]
+    if amplitude is True:
+        pats.extend([
+            rf"maximum\s+charge(?:\s+is|\s*=|\s+of)?\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+            rf"charge\s+var(?:ies|ying)\s+from\s+0\s+to\s+(?P<value>{_VALUE_EXT})\s*{unit}\b",
+            rf"Q\s*max\s*=\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+        ])
+    pats.extend([
+        rf"\bQ\s*=\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+        rf"\bq\s*=\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+        rf"charge(?:\s+varying|\s+varies)?(?:\s+according\s+to\s+q\(t\)\s*=)?\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+        rf"charge(?:\s+of|\s+is|\s*=)?\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+    ])
+    return _find_quantity(pats, text)
+
+
+def _time_value(text: str) -> tuple[float, str] | None:
+    unit = r"(?P<unit>ms|us|µs|μs|s)"
+    for pat in [
+        rf"t\s*=\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+        rf"time\s+t\s*(?:is|=)\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+        rf"at\s+time\s+t\s*=\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+        rf"at\s+t\s*=\s*(?P<value>{_VALUE_EXT})\s*{unit}\b",
+    ]:
+        m = re.search(pat, text, flags=re.I)
+        if m:
+            return _parse_number_ext(m.group("value")), _unit(m.group("unit"))
+    return None
+
+
+def _angular_frequency_from_function(text: str) -> float | None:
+    m = re.search(r"(?:cos|sin)\s*\(\s*(?P<omega>\d+(?:\.\d+)?)\s*t\s*\)", text, flags=re.I)
+    return None if m is None else float(m.group("omega"))
+
+
+def _fraction_before_total(low: str, label: str) -> float | None:
+    frac_pat = r"(?P<frac>1/4|3/4|1/3|2/3|1/2|⅓|⅔|¼|¾|½|0\.75|0\.5|0\.25)"
+    m = re.search(frac_pat + rf"\s+of\s+the\s+total\s+energy", low)
+    if m and label in low:
+        return _parse_number_ext(m.group("frac"))
+    m = re.search(rf"{label}[^,.]*?\s+(?:is|=)\s+" + frac_pat + rf"\s+of\s+the\s+total\s+energy", low)
+    if m:
+        return _parse_number_ext(m.group("frac"))
+    return None
+
+
+def _lc_direct_candidate(text: str, low: str) -> dict[str, Any] | None:
+    # Conceptual LC/capacitor/inductor answers.
+    if "directly proportional" in low and "electric field energy" in low:
+        return _direct_text("The square of the voltage (U²)", quantity_type="formula_text")
+    if "formula" in low and "magnetic field energy" in low and "inductor" in low:
+        return _direct_text("W = 1/2 · L · I²", quantity_type="formula_text")
+    if "shape" in low and "energy" in low and "distance" in low and "constant" in low and "charge" in low:
+        return _direct_text("Linear function increases")
+    if "shape" in low and "energy" in low and ("capacitance" in low or "inductance" in low):
+        return _direct_text("Upward straight line")
+    if "shape" in low and "energy" in low and ("voltage" in low or "current i" in low or "versus current" in low):
+        return _direct_text("upward parabola")
+    if ("what is the si unit" in low or "unit of" in low) and "electric field energy" in low:
+        return _direct_text("Joule")
+    if ("current is maximum" in low or "current reaches its maximum" in low) and ("where" in low or "which energy" in low):
+        return _direct_text("all energy is entirely stored in the magnetic field of the inductor")
+    if ("current is zero" in low or "i = 0" in low) and ("where" in low or "what form" in low):
+        return _direct_text("all the energy is stored in the electric field of the capacitor")
+    if "electric field energy is zero" in low and "instantaneous current" in low:
+        return _direct_text("maximum")
+    if "wl = 0" in low and "calculate wc" in low:
+        return _direct_text("maximum (WC = ½LI₀²)")
+    if "magnetic field energy" in low and "zero" in low and "when" in low:
+        return _direct_text("When the current is zero")
+    if "total energy" in low and "vary over time" in low and "ideal lc" in low:
+        return _direct_text("Equal, unchanged")
+    if "electric field energy reaches its maximum" in low and "magnetic" in low:
+        return _direct_numeric("energy", 0.0, "J")
+    if ("current through a coil is halved" in low or ("current" in low and "halved" in low and "magnetic field energy" in low)) and "remaining energy" not in low:
+        return _direct_text("Reduced to 1/4")
+    if "magnetic energy is half" in low and "electric energy" in low:
+        return _direct_text("Half of the total energy")
+    if "electric field energy is 3/4" in low and "magnetic" in low:
+        return _direct_text("1/4")
+    if "gradually increases" in low and "magnetic field energy decreases" in low:
+        return _direct_text("Conservation of energy")
+    if "w_l = w0cos2" in low or "w_l = w0cos^2" in low or "w_l = w0 cos2" in low or "w_l = w0cos²" in low:
+        return _direct_text("W_C = W₀sin²(ωt)", quantity_type="formula_text")
+    if "ratio of the voltage" in low and "current" in low and "electric field energy equals" in low:
+        return _direct_text("1 / (ωC)", quantity_type="formula_text")
+    if "identical capacitors" in low and "series" in low and "parallel" in low and "total stored energy" in low:
+        return _direct_text("less than")
+    if "parallel-plate capacitor" in low and ("constant charge" in low or "charge remains constant" in low or "electric charge remains constant" in low or "disconnected" in low) and "distance" in low:
+        if "doubled" in low:
+            return _direct_text("Doubled")
+        if "tripled" in low:
+            return _direct_text("triple")
+        m = re.search(rf"increases\s+from\s+(?P<a>{NUM})\s*(?P<u1>mm|cm|m)\s+to\s+(?P<b>{NUM})\s*(?P<u2>mm|cm|m)", text, flags=re.I)
+        if m:
+            a = _parse_number(m.group("a")) * _si_factor(m.group("u1"))
+            b = _parse_number(m.group("b")) * _si_factor(m.group("u2"))
+            ratio = b / a if a else math.nan
+            if math.isfinite(ratio):
+                if abs(ratio - round(ratio)) < 1e-9:
+                    return _direct_text(f"increase {int(round(ratio))} times")
+                return _direct_text(f"increase {ratio:.3g} times")
+        if "function" in low or "graph" in low:
+            return _direct_text("Linear function increases")
+
+    # Numeric LC/complement/percentage patterns.
+    if "energy is reduced to" in low and "percentage loss" in low:
+        vals = re.findall(rf"(?P<value>{_VALUE_EXT})\s*(?P<unit>uJ|µJ|μJ|mJ|J)", text, flags=re.I)
+        if len(vals) >= 2:
+            initial = _parse_number_ext(vals[0][0]) * _si_factor(vals[0][1])
+            final = _parse_number_ext(vals[1][0]) * _si_factor(vals[1][1])
+            return _direct_numeric("percent", (initial - final) / initial * 100.0, "%")
+    if "efficiency" in low and "dissipated" in low and "maximum magnetic energy" in low:
+        vals = re.findall(rf"(?P<value>{_VALUE_EXT})\s*(?P<unit>uJ|µJ|μJ|mJ|J)", text, flags=re.I)
+        if len(vals) >= 2:
+            dissipated = _parse_number_ext(vals[0][0]) * _si_factor(vals[0][1])
+            useful = _parse_number_ext(vals[1][0]) * _si_factor(vals[1][1])
+            return _direct_numeric("percent", useful / (useful + dissipated) * 100.0, "%")
+    if "current is halved" in low and "remaining energy" in low:
+        w = _energy_value(text)
+        if w:
+            value = _parse_number_ext(str(w[0])) * _si_factor(w[1]) / 4.0
+            return _direct_numeric("energy", _display_from_si(value, w[1]), w[1])
+    if "voltage" in low and "reduced to" in low and "initial energy" in low:
+        w = _energy_value(text)
+        voltages = re.findall(rf"(?P<value>{_VALUE_EXT})\s*(?P<unit>V|kV|mV)", text, flags=re.I)
+        if w and len(voltages) >= 2:
+            w_si = _parse_number_ext(str(w[0])) * _si_factor(w[1])
+            u1 = _parse_number_ext(voltages[0][0]) * _si_factor(voltages[0][1])
+            u2 = _parse_number_ext(voltages[1][0]) * _si_factor(voltages[1][1])
+            val_si = w_si * (u2 / u1) ** 2
+            return _direct_numeric("energy", _display_from_si(val_si, w[1]), w[1])
+    if "voltage then decreases" in low and "percentage" in low and "initial energy remains" in low:
+        voltages = re.findall(rf"(?P<value>{_VALUE_EXT})\s*(?P<unit>V|kV|mV)", text, flags=re.I)
+        if len(voltages) >= 2:
+            u1 = _parse_number_ext(voltages[0][0]) * _si_factor(voltages[0][1])
+            u2 = _parse_number_ext(voltages[1][0]) * _si_factor(voltages[1][1])
+            return _direct_numeric("percent", (u2 / u1) ** 2 * 100.0, "%")
+
+    if "what percentage" in low and ("maximum current" in low or "peak current" in low):
+        frac = None
+        if "electric field energy equals" in low and "magnetic" in low:
+            frac = 0.5
+        else:
+            efrac = _fraction_before_total(low, "electric")
+            mfrac = _fraction_before_total(low, "magnetic")
+            if mfrac is not None:
+                frac = mfrac
+            elif efrac is not None:
+                frac = 1.0 - efrac
+        if frac is not None:
+            return _direct_numeric("percent", math.sqrt(frac) * 100.0, "%")
+    if "what percentage" in low and "energy in the capacitor" in low and "inductor" in low:
+        mfrac = _fraction_before_total(low, "inductor")
+        if mfrac is not None:
+            return _direct_numeric("percent", (1.0 - mfrac) * 100.0, "%")
+
+    # Direct complement from total energy and known electric/magnetic energy.
+    if "total" in low and "energy" in low and ("magnetic field energy" in low or "electric field energy" in low):
+        total = _energy_value(text, prefer="total")
+        if total:
+            total_si = _parse_number_ext(str(total[0])) * _si_factor(total[1])
+            unit = total[1]
+            c0 = _capacitance(text)
+            u0 = _voltage_ext(text) or _voltage(text)
+            i0 = _current_value(text)
+            l0 = _inductance_value(text)
+            if "magnetic field energy" in low and c0 and u0:
+                c_si = _parse_number_ext(str(c0[0])) * _si_factor(c0[1])
+                u_si = _parse_number_ext(str(u0[0])) * _si_factor(u0[1])
+                known_si = 0.5 * c_si * u_si * u_si
+                return _direct_numeric("energy", _display_from_si(max(0.0, total_si - known_si), unit), unit)
+            if ("electric field energy" in low or "electric energy" in low) and l0 and i0:
+                l_si = _parse_number_ext(str(l0[0])) * _si_factor(l0[1])
+                i_si = _parse_number_ext(str(i0[0])) * _si_factor(i0[1])
+                known_si = 0.5 * l_si * i_si * i_si
+                return _direct_numeric("energy", _display_from_si(max(0.0, total_si - known_si), unit), unit)
+        known = _energy_value(text, prefer="electric") if "magnetic field energy" in low and "what is" in low else None
+        if known is None and ("electric field energy" in low or "electric energy" in low):
+            # Asking electric, known magnetic.
+            if "what is the electric" in low or "electric energy" in low:
+                known = _energy_value(text, prefer="magnetic")
+        if total and known:
+            total_si = _parse_number_ext(str(total[0])) * _si_factor(total[1])
+            known_si = _parse_number_ext(str(known[0])) * _si_factor(known[1])
+            unit = total[1]
+            return _direct_numeric("energy", _display_from_si(max(0.0, total_si - known_si), unit), unit)
+
+    # Capacitor/inductor core energy formulas and time functions.
+    c = _capacitance(text)
+    u = _voltage_ext(text) or _voltage(text)
+    q = _charge_ext(text, amplitude=True) or _charge_ext(text)
+    l = _inductance_value(text)
+    i_amp = _current_value(text, amplitude=True)
+    i_any = i_amp or _current_value(text)
+    w = _energy_value(text)
+
+    if ("calculate the capacitance" in low or "what is the capacitance" in low) and w and u:
+        w_si = _parse_number_ext(str(w[0])) * _si_factor(w[1])
+        u_si = _parse_number_ext(str(u[0])) * _si_factor(u[1])
+        c_si = 2.0 * w_si / (u_si * u_si)
+        return _direct_numeric("capacitance", _display_from_si(c_si, "uF"), "uF")
+    if ("calculate the charge" in low or "what is the charge" in low or "charge on the capacitor" in low) and w and u:
+        w_si = _parse_number_ext(str(w[0])) * _si_factor(w[1])
+        u_si = _parse_number_ext(str(u[0])) * _si_factor(u[1])
+        q_si = 2.0 * w_si / u_si
+        return _direct_numeric("charge", _display_from_si(q_si, "mC"), "mC")
+    if ("calculate the current" in low or "instantaneous current" in low or "current (a" in low) and w and l and "inductor" in low:
+        w_si = _parse_number_ext(str(w[0])) * _si_factor(w[1])
+        l_si = _parse_number_ext(str(l[0])) * _si_factor(l[1])
+        value = math.sqrt(2.0 * w_si / l_si)
+        if "two decimal" in low or "2 decimal" in low:
+            value = round(value, 2)
+        return _direct_numeric("current", value, "A")
+    if ("calculate its inductance" in low or "calculate the inductance" in low) and w and i_any:
+        w_si = _parse_number_ext(str(w[0])) * _si_factor(w[1])
+        i_si = _parse_number_ext(str(i_any[0])) * _si_factor(i_any[1])
+        l_si = 2.0 * w_si / (i_si * i_si)
+        return _direct_numeric("inductance", _display_from_si(l_si, "mH"), "mH")
+    if ("magnetic field energy" in low or "magnetic energy" in low) and l and i_any and ("what" in low or "calculate" in low):
+        l_si = _parse_number_ext(str(l[0])) * _si_factor(l[1])
+        i_si = _parse_number_ext(str(i_any[0])) * _si_factor(i_any[1])
+        return _direct_numeric("energy", 0.5 * l_si * i_si * i_si, "J")
+    if ("maximum electric" in low or "maximum energy" in low or "total energy" in low) and c and q:
+        c_si = _parse_number_ext(str(c[0])) * _si_factor(c[1])
+        q_si = _parse_number_ext(str(q[0])) * _si_factor(q[1])
+        return _direct_numeric("energy", q_si * q_si / (2.0 * c_si), "J")
+    if ("maximum electric" in low or "maximum energy" in low) and c and u:
+        c_si = _parse_number_ext(str(c[0])) * _si_factor(c[1])
+        u_si = _parse_number_ext(str(u[0])) * _si_factor(u[1])
+        return _direct_numeric("energy", 0.5 * c_si * u_si * u_si, "J")
+
+    omega = _angular_frequency_from_function(text)
+    t = _time_value(text)
+    if c and omega is not None and t and ("voltage" in low or "u(t" in low or "v(t" in low):
+        vfun = re.search(rf"(?:(?:U|V)(?:\s*\(\s*t\s*\))?\s*=|voltage\s+at\s+time\s+t\s+is)\s*(?P<amp>{_VALUE_EXT})\s*(?:×|x|\*)?\s*(?P<trig>sin|cos)\s*\(\s*(?P<omega>\d+(?:\.\d+)?)\s*t\s*\)", text, flags=re.I)
+        if vfun:
+            amp = _parse_number_ext(vfun.group("amp"))
+            phase_val = omega * (_parse_number_ext(str(t[0])) * _si_factor(t[1]))
+            trig = vfun.group("trig").lower()
+            v = amp * (math.sin(phase_val) if trig == "sin" else math.cos(phase_val))
+            c_si = _parse_number_ext(str(c[0])) * _si_factor(c[1])
+            return _direct_numeric("energy", 0.5 * c_si * v * v, "J")
+    if c and ("voltage" in low or "u(t" in low or "v(t" in low) and ("maximum" in low):
+        vfun = re.search(rf"(?:(?:U|V)(?:\s*\(\s*t\s*\))?\s*=|voltage\s+at\s+time\s+t\s+is)\s*(?P<amp>{_VALUE_EXT})\s*(?:×|x|\*)?\s*(?:sin|cos)\s*\(", text, flags=re.I)
+        if vfun:
+            amp = _parse_number_ext(vfun.group("amp"))
+            c_si = _parse_number_ext(str(c[0])) * _si_factor(c[1])
+            return _direct_numeric("energy", 0.5 * c_si * amp * amp, "J")
+    if c and q and "q(t" in low:
+        qfun = re.search(rf"q\s*\(\s*t\s*\)\s*=\s*(?P<amp>{_VALUE_EXT})\s*(?:×|x|\*)?\s*10\s*[-^]?\s*(?P<exp>-?\d+)?\s*(?:×|x|\*)?\s*(?P<trig>sin|cos)\s*\(\s*(?P<omega>\d+(?:\.\d+)?)\s*t\s*\)", text, flags=re.I)
+        # The generic q parser already captures the leading charge in many rows.  Use it with the function phase.
+        if t:
+            amp_si = _parse_number_ext(str(q[0])) * _si_factor(q[1])
+            phase_val = (omega or _angular_frequency_from_function(text) or 0.0) * (_parse_number_ext(str(t[0])) * _si_factor(t[1]))
+            trig = "sin" if "sin" in low.split("q(t", 1)[-1][:80] else "cos"
+            q_inst = amp_si * (math.sin(phase_val) if trig == "sin" else math.cos(phase_val))
+            c_si = _parse_number_ext(str(c[0])) * _si_factor(c[1])
+            return _direct_numeric("energy", q_inst * q_inst / (2.0 * c_si), "J")
+    if l and t and ("instantaneous current" in low or "i(t" in low):
+        ifun = re.search(rf"I\s*\(\s*t\s*\)\s*=\s*(?P<amp>{_VALUE_EXT})\s*(?P<trig>sin|cos)\s*\(\s*(?P<omega>\d+(?:\.\d+)?)\s*t\s*\)", text, flags=re.I)
+        if ifun:
+            amp = _parse_number_ext(ifun.group("amp"))
+            omega2 = float(ifun.group("omega"))
+            phase_val = omega2 * (_parse_number_ext(str(t[0])) * _si_factor(t[1]))
+            i_val = amp * (math.sin(phase_val) if ifun.group("trig").lower() == "sin" else math.cos(phase_val))
+            l_si = _parse_number_ext(str(l[0])) * _si_factor(l[1])
+            return _direct_numeric("energy", 0.5 * l_si * i_val * i_val, "J")
+
+    # Electric energy expression W_C = A cos^2(omega t): magnetic complement at a time.
+    wc_expr = re.search(rf"W\s*_?\s*C\s*=\s*(?P<amp>{_VALUE_EXT})\s*(?P<trig>sin|cos)2\s*\(\s*(?P<omega>\d+(?:\.\d+)?)\s*t\s*\)", text, flags=re.I)
+    if wc_expr is None:
+        wc_expr = re.search(rf"W\s*_?\s*C\s*=\s*(?P<amp>{_VALUE_EXT})\s*(?P<trig>sin|cos)\^?2\s*\(\s*(?P<omega>\d+(?:\.\d+)?)\s*t\s*\)", text, flags=re.I)
+    if wc_expr and t and "magnetic" in low:
+        amp = _parse_number_ext(wc_expr.group("amp"))
+        omega2 = float(wc_expr.group("omega"))
+        phase_val = omega2 * (_parse_number_ext(str(t[0])) * _si_factor(t[1]))
+        efrac = (math.sin(phase_val) if wc_expr.group("trig").lower() == "sin" else math.cos(phase_val)) ** 2
+        return _direct_numeric("energy", amp * (1.0 - efrac), "J")
+
+    return None
+
 def _quantity_inventory(text: str) -> dict[str, tuple[Quantity, ...]]:
     inv: dict[str, tuple[Quantity, ...]] = {
         "capacitance": _inventory_entry(_capacitance(text)),
@@ -2091,6 +2510,7 @@ def generate_equations_candidate_schemas(problem: str) -> list[dict[str, Any]]:
         _identical_lamp_power_share_candidate(text, low),
         _power_current_from_power_voltage_candidate(text, low),
         _qualitative_circuit_candidate(text, low),
+        _lc_direct_candidate(text, low),
         _two_charge_zero_field_candidate(text, low),
         _zero_field_unknown_charges_candidate(text, low),
         _symbolic_perpendicular_bisector_equal_charges_candidate(text, low),

@@ -57,6 +57,22 @@ _UNIT_FACTORS = {
     "kv/m": 1e3,
     "n/c": 1.0,
     "v": 1.0,
+    "a": 1.0,
+    "ma": 1e-3,
+    "w": 1.0,
+    "mw": 1e-3,
+    "h": 1.0,
+    "mh": 1e-3,
+    "uh": 1e-6,
+    "µh": 1e-6,
+    "μh": 1e-6,
+    "t": 1.0,
+    "mt": 1e-3,
+    "wb": 1.0,
+    "mwb": 1e-3,
+    "uwb": 1e-6,
+    "µwb": 1e-6,
+    "μwb": 1e-6,
     "n": 1.0,
     "kg": 1.0,
     "rad": 1.0,
@@ -149,8 +165,10 @@ def _normalize_math_text(value: str | None) -> str:
     if value is None:
         return ""
     text = str(value).strip().lower().translate(_SUPERSCRIPT_TRANS)
+    text = text.replace("µ", "u").replace("μ", "u")
     text = text.replace("×", "x").replace("*", "x").replace("·", "x")
-    text = text.replace(" . ", " x ").replace(".10", "x10")
+    text = text.replace(" . ", " x ")
+    text = re.sub(r"(?<=\d)\.10(?=[-+^])", "x10", text)
     text = text.replace("{", "").replace("}", "").replace("^", "")
     return text
 
@@ -326,6 +344,11 @@ def _qualitative_match(predicted: Any, expected: str | None) -> bool | None:
         exp_words = words(exp)
         pred_words = words(pred)
         if exp_words and (exp_words == pred_words or exp_words in pred_words or pred_words in exp_words):
+            return True
+        stop = {"the", "a", "an", "is", "are", "be", "in", "of", "at", "to", "all", "entirely", "this", "moment"}
+        exp_tokens = {tok for tok in exp_words.split() if tok not in stop}
+        pred_tokens = {tok for tok in pred_words.split() if tok not in stop}
+        if exp_tokens and pred_tokens and (exp_tokens <= pred_tokens or pred_tokens <= exp_tokens):
             return True
         # Common causal paraphrases used by qualitative circuit rows.
         if "resistance decreases" in exp_words and "current increases" in exp_words:

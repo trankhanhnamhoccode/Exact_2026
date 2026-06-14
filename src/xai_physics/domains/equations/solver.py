@@ -4637,6 +4637,33 @@ def _solve_qualitative_circuit_relation(schema: dict[str, Any], formula: str) ->
     result.answer = str(answer)
     return result
 
+
+def _solve_direct_answer(schema: dict[str, Any], formula: str) -> SolveResult:
+    query = _query_obj(schema)
+    if query is None:
+        return _fail("Missing direct answer query object.", formula)
+
+    if query.get("answer") not in (None, ""):
+        result = _new_result()
+        result.add_step("Formula selected", "Use deterministic direct answer from a narrowly matched conceptual/formula pattern.")
+        result.answer = str(query["answer"])
+        return result
+
+    if not _has_value(query):
+        return _fail("Direct answer query has neither answer text nor numeric value.", formula)
+
+    try:
+        quantity_type = str(query.get("type") or "value")
+        default_unit = _raw_unit(query, "")
+        value_si = _to_si_quantity(query, default_unit)
+    except Exception as exc:
+        return _fail(str(exc), formula)
+
+    result = _new_result()
+    result.add_step("Formula selected", "Use deterministic direct numeric answer from a narrowly matched formula pattern.")
+    _set_numeric_answer(result, value_si, query, quantity_type, default_unit, formula=formula)
+    return result
+
 def solve_schema(schema: dict[str, Any]) -> SolveResult:
     formula = _canonical_formula(schema, _formula_id(schema))
 
@@ -4743,6 +4770,7 @@ def solve_schema(schema: dict[str, Any]) -> SolveResult:
         "parallel_remaining_branch_current": _solve_parallel_remaining_branch_current,
         "identical_branch_power_share": _solve_identical_branch_power_share,
         "qualitative_circuit_relation": _solve_qualitative_circuit_relation,
+        "direct_answer": _solve_direct_answer,
         "infinite_wire_electric_field": _solve_infinite_wire_electric_field,
         "percentage_relative_error": _solve_percentage_relative_error,
         "absolute_error_from_actual": _solve_absolute_error_from_actual,

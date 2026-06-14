@@ -110,6 +110,7 @@ def _try_equations_hybrid_selection(
             "identical_branch_power_share",
             "power_voltage_current",
             "qualitative_circuit_relation",
+            "direct_answer",
         }
         has_voltage_formula_candidate = any(
             any(obj.get("role") == "query" and obj.get("type") == "voltage" for obj in schema.get("objects", []))
